@@ -23,6 +23,17 @@ class ShiftRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DepartmentScheduleRead(BaseModel):
+    id: int
+    name: str
+    code: str
+    workweek: list[str] = Field(default_factory=list)
+    is_active: bool
+    shifts: list[ShiftRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ShiftCreateRequest(BaseModel):
     description: str = Field(min_length=1, max_length=255)
     start_time: time

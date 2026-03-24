@@ -18,6 +18,7 @@ def test_core_routes_are_registered():
     assert "/attendance/shifts" in paths
     assert "/attendance/device/getrequest" in paths
     assert "/attendance/me/{year}/{month}" in paths
+    assert "/attendance/users/{user_id}/{year}/{month}" in paths
     assert "/users/{user_id}/biometric" in paths
     assert "/leave/requests/me" in paths
     assert "/leave/requests/review" in paths

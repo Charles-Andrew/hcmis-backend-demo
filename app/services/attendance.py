@@ -2,7 +2,10 @@ from calendar import monthrange, day_name
 from datetime import UTC, date, datetime
 from typing import Literal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.models.attendance import (
@@ -61,6 +64,21 @@ def _ensure_aware(value: datetime) -> datetime:
     return value
 
 
+async def _get_department_with_shifts(
+    session: AsyncSession, department_id: int
+) -> Department:
+    statement = (
+        select(Department)
+        .options(selectinload(Department.shifts))
+        .where(Department.id == department_id)
+    )
+    result = await session.execute(statement)
+    department = result.scalar_one_or_none()
+    if department is None:
+        raise NotFoundError("Department not found.")
+    return department
+
+
 async def list_shifts(session: AsyncSession) -> list[Shift]:
     return await ShiftRepository(session).list()
 
@@ -108,7 +126,10 @@ async def delete_shift(session: AsyncSession, shift_id: int) -> str:
     if shift is None:
         raise NotFoundError("Shift not found.")
     description = shift.description
-    await repository.delete(shift)
+    try:
+        await repository.delete(shift)
+    except IntegrityError as exc:
+        raise ConflictError("Shift cannot be deleted while it is in use.") from exc
     return description
 
 
@@ -121,14 +142,24 @@ async def update_department_schedule(
     if department is None:
         raise NotFoundError("Department not found.")
 
-    department.workweek = payload.workweek
-    department.shifts.clear()
-    for shift_id in payload.shift_ids:
+    selected_shifts: list[Shift] = []
+    for shift_id in dict.fromkeys(payload.shift_ids):
         shift = await shift_repository.get_by_id(shift_id)
         if shift is None:
             raise NotFoundError("Shift not found.")
-        department.shifts.append(shift)
-    return await department_repository.save(department)
+        selected_shifts.append(shift)
+
+    department.workweek = payload.workweek
+    department.shifts.clear()
+    department.shifts.extend(selected_shifts)
+    await department_repository.save(department)
+    return await _get_department_with_shifts(session, department_id)
+
+
+async def get_department_schedule(
+    session: AsyncSession, department_id: int
+) -> Department:
+    return await _get_department_with_shifts(session, department_id)
 
 
 async def list_daily_shift_records(

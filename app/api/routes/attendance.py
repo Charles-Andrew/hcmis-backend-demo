@@ -22,6 +22,7 @@ from app.schemas.attendance import (
     AttendanceRecordRead,
     AttendanceRecordUpdateRequest,
     AttendanceSummaryRead,
+    DepartmentScheduleRead,
     DepartmentScheduleUpdateRequest,
     DailyShiftRecordCreateRequest,
     DailyShiftRecordRead,
@@ -40,7 +41,6 @@ from app.schemas.attendance import (
     ShiftSwapRequestRespondRequest,
     ShiftUpdateRequest,
 )
-from app.schemas.department import DepartmentRead
 from app.services.attendance import (
     create_attendance_record,
     create_daily_shift_record,
@@ -63,6 +63,7 @@ from app.services.attendance import (
     list_overtime_requests,
     list_shift_swap_requests,
     list_shifts,
+    get_department_schedule,
     respond_to_overtime_request,
     respond_to_shift_swap_request,
     sync_device_attendance,
@@ -111,7 +112,10 @@ async def remove_shift(
     return await delete_shift(session, shift_id)
 
 
-@router.patch("/departments/{department_id}/schedule", response_model=DepartmentRead)
+@router.patch(
+    "/departments/{department_id}/schedule",
+    response_model=DepartmentScheduleRead,
+)
 async def patch_department_schedule(
     department_id: int,
     payload: DepartmentScheduleUpdateRequest,
@@ -119,6 +123,15 @@ async def patch_department_schedule(
     current_user: User = Depends(require_staff_user),
 ) -> Department:
     return await update_department_schedule(session, department_id, payload)
+
+
+@router.get("/departments/{department_id}/schedule", response_model=DepartmentScheduleRead)
+async def read_department_schedule(
+    department_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> Department:
+    return await get_department_schedule(session, department_id)
 
 
 @router.get("/schedules", response_model=list[DailyShiftScheduleRead])
@@ -332,6 +345,17 @@ async def get_my_attendance_summary(
     current_user: User = Depends(get_current_user),
 ) -> AttendanceSummaryRead:
     return await get_attendance_summary(session, current_user.id, year, month)
+
+
+@router.get("/users/{user_id}/{year}/{month}", response_model=AttendanceSummaryRead)
+async def get_user_attendance_summary(
+    user_id: int,
+    year: int,
+    month: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> AttendanceSummaryRead:
+    return await get_attendance_summary(session, user_id, year, month)
 
 
 @router.get("/device/getrequest", response_class=PlainTextResponse)

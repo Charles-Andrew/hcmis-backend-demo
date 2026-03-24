@@ -2,6 +2,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
+from pydantic import EmailStr
+from pydantic import Field
 
 from app.schemas.department import DepartmentRead
 
@@ -35,6 +37,32 @@ class UserRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserCreateRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    first_name: str = ""
+    last_name: str = ""
+    middle_name: str | None = None
+    gender: str | None = None
+    education: str | None = None
+    civil_status: str | None = None
+    religion: str | None = None
+    rank: str | None = None
+    employee_number: str | None = None
+    biometric_uid: int | None = None
+    role: str | None = None
+    department_id: int | None = None
+    phone_number: str | None = None
+    address: str | None = None
+    date_of_birth: date | None = None
+    date_of_hiring: date | None = None
+    resignation_date: date | None = None
+    profile_picture_url: str | None = None
+    can_modify_shift: bool = False
+    is_active: bool = True
+    is_superuser: bool = False
 
 
 class UserUpdateRequest(BaseModel):

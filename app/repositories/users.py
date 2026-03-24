@@ -28,18 +28,43 @@ class UserRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_by_employee_number(self, employee_number: str) -> User | None:
+        statement = (
+            select(User)
+            .options(selectinload(User.department))
+            .where(User.employee_number == employee_number)
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_by_biometric_uid(self, biometric_uid: int) -> User | None:
+        statement = (
+            select(User)
+            .options(selectinload(User.department))
+            .where(User.biometric_uid == biometric_uid)
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def list(
         self,
         query: str | None = None,
         department_id: int | None = None,
         active_only: bool | None = None,
         include_superusers: bool = False,
+        exclude_hr: bool = False,
+        exclude_user_id: int | None = None,
     ) -> list[User]:
         statement = select(User).options(selectinload(User.department)).outerjoin(
             Department, Department.id == User.department_id
         )
         if not include_superusers:
             statement = statement.where(User.is_superuser.is_(False))
+        if exclude_hr:
+            hr_label = "HR"
+            statement = statement.where(func.upper(func.coalesce(User.role, "")) != hr_label)
+        if exclude_user_id is not None:
+            statement = statement.where(User.id != exclude_user_id)
         if department_id is not None:
             statement = statement.where(User.department_id == department_id)
         if active_only is True:

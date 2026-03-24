@@ -1,9 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
+from app.core.exceptions import ConflictError
 from app.core.exceptions import NotFoundError
+from app.core.security import hash_password
 from app.models.user import User
 from app.repositories.departments import DepartmentRepository
 from app.repositories.users import UserRepository
+from app.schemas.user import UserCreateRequest
 from app.schemas.user import (
     UserBiometricUpdateRequest,
     UserProfileUpdateRequest,
@@ -17,6 +21,8 @@ async def list_users(
     department_id: int | None = None,
     active_only: bool | None = None,
     include_superusers: bool = False,
+    exclude_hr: bool = False,
+    exclude_user_id: int | None = None,
 ) -> list[User]:
     repository = UserRepository(session)
     return await repository.list(
@@ -24,7 +30,69 @@ async def list_users(
         department_id=department_id,
         active_only=active_only,
         include_superusers=include_superusers,
+        exclude_hr=exclude_hr,
+        exclude_user_id=exclude_user_id,
     )
+
+
+async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User:
+    user_repository = UserRepository(session)
+    department_repository = DepartmentRepository(session)
+    email = payload.email.lower()
+
+    existing_user = await user_repository.get_by_email(email)
+    if existing_user is not None:
+        raise ConflictError("Email is already registered.")
+
+    if payload.employee_number:
+        existing_employee = await user_repository.get_by_employee_number(
+            payload.employee_number
+        )
+        if existing_employee is not None:
+            raise ConflictError("Employee number already exists.")
+
+    if payload.biometric_uid is not None:
+        existing_biometric = await user_repository.get_by_biometric_uid(
+            payload.biometric_uid
+        )
+        if existing_biometric is not None:
+            raise ConflictError("Biometric UID is already assigned to another user.")
+
+    if payload.department_id is not None:
+        department = await department_repository.get_by_id(payload.department_id)
+        if department is None:
+            raise NotFoundError("Department not found.")
+
+    password_hash = hash_password(payload.password)
+    user = User(
+        email=email,
+        password_hash=password_hash,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        middle_name=payload.middle_name,
+        gender=payload.gender,
+        education=payload.education,
+        civil_status=payload.civil_status,
+        religion=payload.religion,
+        rank=payload.rank,
+        employee_number=payload.employee_number,
+        biometric_uid=payload.biometric_uid,
+        role=payload.role,
+        department_id=payload.department_id,
+        phone_number=payload.phone_number,
+        address=payload.address,
+        date_of_birth=payload.date_of_birth,
+        date_of_hiring=payload.date_of_hiring,
+        resignation_date=payload.resignation_date,
+        profile_picture_url=payload.profile_picture_url,
+        can_modify_shift=payload.can_modify_shift,
+        is_active=payload.is_active,
+        is_superuser=payload.is_superuser,
+    )
+    try:
+        return await user_repository.create(user)
+    except IntegrityError as exc:
+        raise ConflictError("User already exists.") from exc
 
 
 async def get_user(session: AsyncSession, user_id: int) -> User:

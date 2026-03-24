@@ -28,10 +28,30 @@ class FakeUserRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list(self, query=None, department_id=None, active_only=None, include_superusers=False):
+    async def list(
+        self,
+        query=None,
+        department_id=None,
+        active_only=None,
+        include_superusers=False,
+        exclude_hr=False,
+        exclude_user_id=None,
+    ):
         users = list(self.users.values())
         if not include_superusers:
             users = [user for user in users if not user.is_superuser]
+        if exclude_hr:
+            users = [
+                user
+                for user in users
+                if (user.role or "").strip().upper() != "HR"
+                and (getattr(user.department, "code", "") or "").strip().upper()
+                != "HR"
+                and (getattr(user.department, "name", "") or "").strip().upper()
+                != "HR"
+            ]
+        if exclude_user_id is not None:
+            users = [user for user in users if user.id != exclude_user_id]
         if department_id is not None:
             users = [user for user in users if user.department_id == department_id]
         if active_only is True:
@@ -68,12 +88,16 @@ async def _list_users(
     query: str | None = None,
     department_id: int | None = None,
     active_only: bool | None = None,
+    exclude_hr: bool = False,
+    exclude_user_id: int | None = None,
 ):
     return await user_service.list_users(
         session=cast(AsyncSession, object()),
         query=query,
         department_id=department_id,
         active_only=active_only,
+        exclude_hr=exclude_hr,
+        exclude_user_id=exclude_user_id,
     )
 
 
@@ -161,6 +185,31 @@ def test_list_users_filters_and_orders(monkeypatch):
     assert [user.first_name for user in response] == ["Alice", "Charlie", "Bob"]
 
 
+def test_list_users_can_exclude_hr_users(monkeypatch):
+    accounting = _make_department(1, "Accounting")
+    hr = _make_department(2, "Human Resources")
+
+    emp = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
+    hr_role = _make_user(2, "Bob", "B", "bob@example.com", accounting, 1)
+    hr_role.role = "HR"
+    hr_department = _make_user(3, "Cara", "C", "cara@example.com", hr, 2)
+
+    FakeUserRepository.users = {
+        emp.id: emp,
+        hr_role.id: hr_role,
+        hr_department.id: hr_department,
+    }
+
+    monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
+
+    response = anyio.run(_list_users, None, None, None, True)
+
+    assert [user.email for user in response] == [
+        "alice@example.com",
+        "cara@example.com",
+    ]
+
+
 def test_list_users_supports_query_and_department_filters(monkeypatch):
     accounting = _make_department(1, "Accounting")
     hr = _make_department(2, "Human Resources")
@@ -178,6 +227,19 @@ def test_list_users_supports_query_and_department_filters(monkeypatch):
     )
 
     assert [user.email for user in response] == ["bob@example.com"]
+
+
+def test_list_users_can_exclude_a_specific_user(monkeypatch):
+    accounting = _make_department(1, "Accounting")
+    alice = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
+    bob = _make_user(2, "Bob", "B", "bob@example.com", accounting, 1)
+
+    FakeUserRepository.users = {alice.id: alice, bob.id: bob}
+    monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
+
+    response = anyio.run(_list_users, None, None, None, False, 2)
+
+    assert [user.id for user in response] == [1]
 
 
 def test_update_user_changes_department_and_status(monkeypatch):
