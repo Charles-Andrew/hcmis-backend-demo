@@ -6,25 +6,25 @@ from sqlalchemy.orm import selectinload
 
 from app.models.attendance import (
     AttendanceRecord,
-    DailyShiftRecord,
-    DailyShiftSchedule,
+    DepartmentRosterDay,
+    EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
-    Shift,
+    ShiftTemplate,
     ShiftSwapRequest,
 )
 
 
-class ShiftRepository:
+class ShiftTemplateRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Shift]:
-        result = await self.session.execute(select(Shift).order_by(Shift.description))
+    async def list(self) -> list[ShiftTemplate]:
+        result = await self.session.execute(select(ShiftTemplate).order_by(ShiftTemplate.description))
         return list(result.scalars().all())
 
-    async def get_by_id(self, shift_id: int) -> Shift | None:
-        result = await self.session.execute(select(Shift).where(Shift.id == shift_id))
+    async def get_by_id(self, shift_id: int) -> ShiftTemplate | None:
+        result = await self.session.execute(select(ShiftTemplate).where(ShiftTemplate.id == shift_id))
         return result.scalar_one_or_none()
 
     async def get_by_identity(
@@ -34,30 +34,30 @@ class ShiftRepository:
         end_time,
         start_time_2=None,
         end_time_2=None,
-    ) -> Shift | None:
+    ) -> ShiftTemplate | None:
         result = await self.session.execute(
-            select(Shift).where(
-                Shift.description == description,
-                Shift.start_time == start_time,
-                Shift.end_time == end_time,
-                Shift.start_time_2 == start_time_2,
-                Shift.end_time_2 == end_time_2,
+            select(ShiftTemplate).where(
+                ShiftTemplate.description == description,
+                ShiftTemplate.start_time == start_time,
+                ShiftTemplate.end_time == end_time,
+                ShiftTemplate.start_time_2 == start_time_2,
+                ShiftTemplate.end_time_2 == end_time_2,
             )
         )
         return result.scalar_one_or_none()
 
-    async def create(self, shift: Shift) -> Shift:
+    async def create(self, shift: ShiftTemplate) -> ShiftTemplate:
         self.session.add(shift)
         await self.session.commit()
         await self.session.refresh(shift)
         return shift
 
-    async def save(self, shift: Shift) -> Shift:
+    async def save(self, shift: ShiftTemplate) -> ShiftTemplate:
         await self.session.commit()
         await self.session.refresh(shift)
         return shift
 
-    async def delete(self, shift: Shift) -> None:
+    async def delete(self, shift: ShiftTemplate) -> None:
         await self.session.delete(shift)
         await self.session.commit()
 
@@ -114,87 +114,119 @@ class AttendanceRecordRepository:
         await self.session.commit()
 
 
-class DailyShiftScheduleRepository:
+class EmployeeShiftAssignmentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def list_for_department_month(
         self, department_id: int, year: int, month: int
-    ) -> list[DailyShiftSchedule]:
+    ) -> list[EmployeeShiftAssignment]:
         result = await self.session.execute(
-            select(DailyShiftSchedule)
-            .options(selectinload(DailyShiftSchedule.shift), selectinload(DailyShiftSchedule.user))
-            .join(DailyShiftRecord, DailyShiftRecord.date == DailyShiftSchedule.date)
-            .where(
-                DailyShiftRecord.department_id == department_id,
-                DailyShiftSchedule.date >= date(year, month, 1),
-                DailyShiftSchedule.date < date(year + (month // 12), ((month % 12) + 1), 1),
+            select(EmployeeShiftAssignment)
+            .options(
+                selectinload(EmployeeShiftAssignment.shift_template),
+                selectinload(EmployeeShiftAssignment.user),
             )
-            .order_by(DailyShiftSchedule.date)
+            .join(EmployeeShiftAssignment.user)
+            .where(
+                EmployeeShiftAssignment.date >= date(year, month, 1),
+                EmployeeShiftAssignment.date < date(year + (month // 12), ((month % 12) + 1), 1),
+                EmployeeShiftAssignment.user.has(department_id=department_id),
+            )
+            .order_by(EmployeeShiftAssignment.date)
         )
         return list(result.scalars().all())
 
-    async def get_by_id(self, schedule_id: int) -> DailyShiftSchedule | None:
+    async def list_for_user_month(
+        self, user_id: int, year: int, month: int
+    ) -> list[EmployeeShiftAssignment]:
         result = await self.session.execute(
-            select(DailyShiftSchedule).where(DailyShiftSchedule.id == schedule_id)
+            select(EmployeeShiftAssignment)
+            .options(
+                selectinload(EmployeeShiftAssignment.shift_template),
+                selectinload(EmployeeShiftAssignment.user),
+            )
+            .where(
+                EmployeeShiftAssignment.user_id == user_id,
+                EmployeeShiftAssignment.date >= date(year, month, 1),
+                EmployeeShiftAssignment.date < date(year + (month // 12), ((month % 12) + 1), 1),
+            )
+            .order_by(EmployeeShiftAssignment.date)
+        )
+        return list(result.scalars().all())
+
+    async def get_by_id(self, schedule_id: int) -> EmployeeShiftAssignment | None:
+        result = await self.session.execute(
+            select(EmployeeShiftAssignment).where(EmployeeShiftAssignment.id == schedule_id)
         )
         return result.scalar_one_or_none()
 
-    async def create(self, schedule: DailyShiftSchedule) -> DailyShiftSchedule:
+    async def get_by_user_date(
+        self, user_id: int, selected_date: date
+    ) -> EmployeeShiftAssignment | None:
+        result = await self.session.execute(
+            select(EmployeeShiftAssignment).where(
+                EmployeeShiftAssignment.user_id == user_id,
+                EmployeeShiftAssignment.date == selected_date,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, schedule: EmployeeShiftAssignment) -> EmployeeShiftAssignment:
         self.session.add(schedule)
         await self.session.commit()
         await self.session.refresh(schedule)
         return schedule
 
-    async def save(self, schedule: DailyShiftSchedule) -> DailyShiftSchedule:
+    async def save(self, schedule: EmployeeShiftAssignment) -> EmployeeShiftAssignment:
         await self.session.commit()
         await self.session.refresh(schedule)
         return schedule
 
-    async def delete(self, schedule: DailyShiftSchedule) -> None:
+    async def delete(self, schedule: EmployeeShiftAssignment) -> None:
         await self.session.delete(schedule)
         await self.session.commit()
 
 
-class DailyShiftRecordRepository:
+class DepartmentRosterDayRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def get_by_department_date(
         self, department_id: int, selected_date: date
-    ) -> DailyShiftRecord | None:
+    ) -> DepartmentRosterDay | None:
         result = await self.session.execute(
-            select(DailyShiftRecord)
-            .options(selectinload(DailyShiftRecord.schedules))
+            select(DepartmentRosterDay)
+            .options(selectinload(DepartmentRosterDay.employee_shift_assignments))
             .where(
-                DailyShiftRecord.department_id == department_id,
-                DailyShiftRecord.date == selected_date,
+                DepartmentRosterDay.department_id == department_id,
+                DepartmentRosterDay.date == selected_date,
             )
         )
         return result.scalar_one_or_none()
 
     async def list_for_department_month(
         self, department_id: int, year: int, month: int
-    ) -> list[DailyShiftRecord]:
+    ) -> list[DepartmentRosterDay]:
         result = await self.session.execute(
-            select(DailyShiftRecord)
-            .options(selectinload(DailyShiftRecord.schedules))
+            select(DepartmentRosterDay)
+            .options(selectinload(DepartmentRosterDay.employee_shift_assignments))
             .where(
-                DailyShiftRecord.department_id == department_id,
-                DailyShiftRecord.date >= date(year, month, 1),
-                DailyShiftRecord.date < date(year + (month // 12), ((month % 12) + 1), 1),
+                DepartmentRosterDay.department_id == department_id,
+                DepartmentRosterDay.date >= date(year, month, 1),
+                DepartmentRosterDay.date < date(year + (month // 12), ((month % 12) + 1), 1),
             )
-            .order_by(DailyShiftRecord.date)
+            .order_by(DepartmentRosterDay.date)
         )
         return list(result.scalars().all())
 
-    async def create(self, record: DailyShiftRecord) -> DailyShiftRecord:
+    async def create(self, record: DepartmentRosterDay) -> DepartmentRosterDay:
         self.session.add(record)
         await self.session.commit()
         await self.session.refresh(record)
         return record
 
-    async def save(self, record: DailyShiftRecord) -> DailyShiftRecord:
+    async def save(self, record: DepartmentRosterDay) -> DepartmentRosterDay:
         await self.session.commit()
         await self.session.refresh(record)
         return record
@@ -315,3 +347,7 @@ class ShiftSwapRepository:
         await self.session.delete(swap)
         await self.session.commit()
 
+
+ShiftRepository = ShiftTemplateRepository
+DailyShiftScheduleRepository = EmployeeShiftAssignmentRepository
+DailyShiftRecordRepository = DepartmentRosterDayRepository

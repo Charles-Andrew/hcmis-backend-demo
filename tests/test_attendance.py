@@ -8,11 +8,11 @@ from app.core.exceptions import ConflictError
 from app.core.time import utc_now
 from app.models.attendance import (
     AttendanceRecord,
-    DailyShiftRecord,
-    DailyShiftSchedule,
+    DepartmentRosterDay,
+    EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
-    Shift,
+    ShiftTemplate,
     ShiftSwapRequest,
 )
 from app.models.department import Department
@@ -25,7 +25,7 @@ from app.schemas.attendance import (
     HolidayCreateRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRespondRequest,
-    ShiftCreateRequest,
+    ShiftTemplateCreateRequest,
     ShiftSwapRequestCreateRequest,
     ShiftSwapRequestRespondRequest,
 )
@@ -63,8 +63,8 @@ class FakeDepartmentRepository:
         return department
 
 
-class FakeShiftRepository:
-    shifts: dict[int, Shift] = {}
+class FakeShiftTemplateRepository:
+    shifts: dict[int, ShiftTemplate] = {}
     next_id = 1
 
     def __init__(self, session):
@@ -88,7 +88,7 @@ class FakeShiftRepository:
                 return shift
         return None
 
-    async def create(self, shift: Shift):
+    async def create(self, shift: ShiftTemplate):
         shift.id = self.next_id
         self.next_id += 1
         shift.created_at = shift.created_at or utc_now()
@@ -96,12 +96,12 @@ class FakeShiftRepository:
         self.shifts[shift.id] = shift
         return shift
 
-    async def save(self, shift: Shift):
+    async def save(self, shift: ShiftTemplate):
         shift.updated_at = utc_now()
         self.shifts[shift.id] = shift
         return shift
 
-    async def delete(self, shift: Shift):
+    async def delete(self, shift: ShiftTemplate):
         self.shifts.pop(shift.id, None)
 
 
@@ -149,8 +149,8 @@ class FakeAttendanceRecordRepository:
         self.records.pop(record.id, None)
 
 
-class FakeDailyShiftScheduleRepository:
-    schedules: dict[int, DailyShiftSchedule] = {}
+class FakeEmployeeShiftAssignmentRepository:
+    schedules: dict[int, EmployeeShiftAssignment] = {}
     next_id = 1
 
     def __init__(self, session):
@@ -165,10 +165,25 @@ class FakeDailyShiftScheduleRepository:
             and schedule.date.month == month
         ]
 
+    async def list_for_user_month(self, user_id: int, year: int, month: int):
+        return [
+            schedule
+            for schedule in self.schedules.values()
+            if schedule.user_id == user_id
+            and schedule.date.year == year
+            and schedule.date.month == month
+        ]
+
     async def get_by_id(self, schedule_id: int):
         return self.schedules.get(schedule_id)
 
-    async def create(self, schedule: DailyShiftSchedule):
+    async def get_by_user_date(self, user_id: int, selected_date: date):
+        for schedule in self.schedules.values():
+            if schedule.user_id == user_id and schedule.date == selected_date:
+                return schedule
+        return None
+
+    async def create(self, schedule: EmployeeShiftAssignment):
         schedule.id = self.next_id
         self.next_id += 1
         schedule.created_at = schedule.created_at or utc_now()
@@ -176,17 +191,17 @@ class FakeDailyShiftScheduleRepository:
         self.schedules[schedule.id] = schedule
         return schedule
 
-    async def save(self, schedule: DailyShiftSchedule):
+    async def save(self, schedule: EmployeeShiftAssignment):
         schedule.updated_at = utc_now()
         self.schedules[schedule.id] = schedule
         return schedule
 
-    async def delete(self, schedule: DailyShiftSchedule):
+    async def delete(self, schedule: EmployeeShiftAssignment):
         self.schedules.pop(schedule.id, None)
 
 
-class FakeDailyShiftRecordRepository:
-    records: dict[int, DailyShiftRecord] = {}
+class FakeDepartmentRosterDayRepository:
+    records: dict[int, DepartmentRosterDay] = {}
     next_id = 1
 
     def __init__(self, session):
@@ -207,7 +222,7 @@ class FakeDailyShiftRecordRepository:
             and record.date.month == month
         ]
 
-    async def create(self, record: DailyShiftRecord):
+    async def create(self, record: DepartmentRosterDay):
         record.id = self.next_id
         self.next_id += 1
         record.created_at = record.created_at or utc_now()
@@ -215,7 +230,7 @@ class FakeDailyShiftRecordRepository:
         self.records[record.id] = record
         return record
 
-    async def save(self, record: DailyShiftRecord):
+    async def save(self, record: DepartmentRosterDay):
         record.updated_at = utc_now()
         self.records[record.id] = record
         return record
@@ -332,8 +347,10 @@ class FakeShiftSwapRepository:
         self.swaps.pop(swap.id, None)
 
 
-async def _create_shift(payload: ShiftCreateRequest):
-    return await attendance_service.create_shift(session=cast(AsyncSession, object()), payload=payload)
+async def _create_shift(payload: ShiftTemplateCreateRequest):
+    return await attendance_service.create_shift_template(
+        session=cast(AsyncSession, object()), payload=payload
+    )
 
 
 async def _update_department_schedule(department_id: int, payload: DepartmentScheduleUpdateRequest):
@@ -342,6 +359,10 @@ async def _update_department_schedule(department_id: int, payload: DepartmentSch
         department_id=department_id,
         payload=payload,
     )
+
+
+async def _fake_get_department_with_shifts(session, department_id: int):
+    return FakeDepartmentRepository.departments[department_id]
 
 
 async def _sync_device_attendance(
@@ -420,17 +441,53 @@ async def _summary(user_id: int, year: int, month: int) -> AttendanceSummaryRead
     )
 
 
+async def _create_employee_shift_assignment(date_value: date, user_id: int, shift_id: int):
+    return await attendance_service.create_employee_shift_assignment(
+        session=cast(AsyncSession, object()),
+        payload=attendance_service.EmployeeShiftAssignmentCreateRequest(
+            date=date_value,
+            user_id=user_id,
+            shift_id=shift_id,
+        ),
+    )
+
+
+async def _copy_previous_month_shift_assignments(user_id: int, year: int, month: int):
+    return await attendance_service.copy_previous_month_employee_shift_assignments(
+        session=cast(AsyncSession, object()),
+        payload=attendance_service.EmployeeShiftAssignmentCopyPreviousMonthRequest(
+            user_id=user_id,
+            year=year,
+            month=month,
+        ),
+    )
+
+
+async def _generate_month_shift_assignments(
+    user_id: int, year: int, month: int, shift_id: int | None = None
+):
+    return await attendance_service.generate_month_employee_shift_assignments(
+        session=cast(AsyncSession, object()),
+        payload=attendance_service.EmployeeShiftAssignmentGenerateMonthRequest(
+            user_id=user_id,
+            year=year,
+            month=month,
+            shift_id=shift_id,
+        ),
+    )
+
+
 def setup_function():
     FakeUserRepository.users = {}
     FakeDepartmentRepository.departments = {}
-    FakeShiftRepository.shifts = {}
-    FakeShiftRepository.next_id = 1
+    FakeShiftTemplateRepository.shifts = {}
+    FakeShiftTemplateRepository.next_id = 1
     FakeAttendanceRecordRepository.records = {}
     FakeAttendanceRecordRepository.next_id = 1
-    FakeDailyShiftScheduleRepository.schedules = {}
-    FakeDailyShiftScheduleRepository.next_id = 1
-    FakeDailyShiftRecordRepository.records = {}
-    FakeDailyShiftRecordRepository.next_id = 1
+    FakeEmployeeShiftAssignmentRepository.schedules = {}
+    FakeEmployeeShiftAssignmentRepository.next_id = 1
+    FakeDepartmentRosterDayRepository.records = {}
+    FakeDepartmentRosterDayRepository.next_id = 1
     FakeHolidayRepository.holidays = {}
     FakeHolidayRepository.next_id = 1
     FakeOvertimeRepository.overtime_requests = {}
@@ -449,8 +506,8 @@ def _make_department(department_id: int, name: str = "Accounting"):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    department.shifts = []
-    department.daily_shift_records = []
+    department.shift_templates = []
+    department.department_roster_days = []
     return department
 
 
@@ -474,7 +531,7 @@ def _make_user(user_id: int, department: Department | None = None, biometric_uid
 
 
 def _make_shift(shift_id: int, description: str = "Morning"):
-    return Shift(
+    return ShiftTemplate(
         id=shift_id,
         description=description,
         start_time=time(8, 0),
@@ -488,11 +545,11 @@ def _make_shift(shift_id: int, description: str = "Morning"):
 
 
 def test_create_shift_and_reject_duplicate(monkeypatch):
-    monkeypatch.setattr(attendance_service, "ShiftRepository", FakeShiftRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
 
     response = anyio.run(
         _create_shift,
-        ShiftCreateRequest(
+        ShiftTemplateCreateRequest(
             description="Morning",
             start_time=time(8, 0),
             end_time=time(17, 0),
@@ -505,7 +562,7 @@ def test_create_shift_and_reject_duplicate(monkeypatch):
     try:
         anyio.run(
             _create_shift,
-            ShiftCreateRequest(
+            ShiftTemplateCreateRequest(
                 description="Morning",
                 start_time=time(8, 0),
                 end_time=time(17, 0),
@@ -521,10 +578,11 @@ def test_update_department_schedule_sets_workweek_and_shifts(monkeypatch):
     department = _make_department(1)
     shift = _make_shift(1)
     FakeDepartmentRepository.departments = {department.id: department}
-    FakeShiftRepository.shifts = {shift.id: shift}
+    FakeShiftTemplateRepository.shifts = {shift.id: shift}
 
     monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(attendance_service, "ShiftRepository", FakeShiftRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
+    monkeypatch.setattr(attendance_service, "_get_department_with_shifts", _fake_get_department_with_shifts)
 
     response = anyio.run(
         _update_department_schedule,
@@ -534,6 +592,165 @@ def test_update_department_schedule_sets_workweek_and_shifts(monkeypatch):
 
     assert response.workweek == ["Monday", "Wednesday"]
     assert response.shifts[0].id == 1
+
+
+def test_create_employee_shift_assignment_rejects_duplicate(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(1, department=department)
+    shift = _make_shift(1)
+    existing = EmployeeShiftAssignment(
+        id=1,
+        date=date(2026, 3, 24),
+        user=user,
+        user_id=user.id,
+        shift_template=shift,
+        shift_template_id=shift.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    FakeUserRepository.users = {user.id: user}
+    FakeShiftTemplateRepository.shifts = {shift.id: shift}
+    FakeEmployeeShiftAssignmentRepository.schedules = {existing.id: existing}
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
+
+    try:
+        anyio.run(_create_employee_shift_assignment, date(2026, 3, 24), user.id, shift.id)
+    except ConflictError:
+        pass
+    else:
+        raise AssertionError("Expected ConflictError")
+
+
+def test_copy_previous_month_shift_assignments(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(1, department=department)
+    source_shift_one = _make_shift(1, "Morning")
+    source_shift_two = _make_shift(2, "Evening")
+    target_shift = _make_shift(3, "Night")
+
+    source_assignment_one = EmployeeShiftAssignment(
+        id=1,
+        date=date(2026, 2, 1),
+        user=user,
+        user_id=user.id,
+        shift_template=source_shift_one,
+        shift_template_id=source_shift_one.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    source_assignment_two = EmployeeShiftAssignment(
+        id=2,
+        date=date(2026, 2, 15),
+        user=user,
+        user_id=user.id,
+        shift_template=source_shift_two,
+        shift_template_id=source_shift_two.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    target_assignment = EmployeeShiftAssignment(
+        id=3,
+        date=date(2026, 3, 10),
+        user=user,
+        user_id=user.id,
+        shift_template=target_shift,
+        shift_template_id=target_shift.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    FakeUserRepository.users = {user.id: user}
+    FakeEmployeeShiftAssignmentRepository.schedules = {
+        source_assignment_one.id: source_assignment_one,
+        source_assignment_two.id: source_assignment_two,
+        target_assignment.id: target_assignment,
+    }
+    FakeEmployeeShiftAssignmentRepository.next_id = 4
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
+
+    response = anyio.run(_copy_previous_month_shift_assignments, user.id, 2026, 3)
+
+    assert response.copied_count == 2
+    assert response.skipped_count == 0
+
+    copied_assignments = sorted(
+        [
+            assignment
+            for assignment in FakeEmployeeShiftAssignmentRepository.schedules.values()
+            if assignment.date.year == 2026 and assignment.date.month == 3
+        ],
+        key=lambda item: item.date,
+    )
+    assert [assignment.date for assignment in copied_assignments] == [
+        date(2026, 3, 1),
+        date(2026, 3, 15),
+    ]
+    assert [assignment.shift_template_id for assignment in copied_assignments] == [1, 2]
+
+
+def test_generate_month_shift_assignments_from_department_policy(monkeypatch):
+    department = _make_department(1)
+    department.workweek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    primary_shift = _make_shift(1, "Morning")
+    secondary_shift = _make_shift(2, "Night")
+    department.shift_templates = [primary_shift, secondary_shift]
+    user = _make_user(1, department=department)
+    existing_assignment = EmployeeShiftAssignment(
+        id=1,
+        date=date(2026, 3, 3),
+        user=user,
+        user_id=user.id,
+        shift_template=secondary_shift,
+        shift_template_id=secondary_shift.id,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    FakeUserRepository.users = {user.id: user}
+    FakeDepartmentRepository.departments = {department.id: department}
+    FakeEmployeeShiftAssignmentRepository.schedules = {existing_assignment.id: existing_assignment}
+    FakeEmployeeShiftAssignmentRepository.next_id = 2
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
+
+    response = anyio.run(_generate_month_shift_assignments, user.id, 2026, 3, primary_shift.id)
+
+    assert response.generated_count > 0
+    assert response.skipped_count == 1
+
+    march_assignments = sorted(
+        [
+            assignment
+            for assignment in FakeEmployeeShiftAssignmentRepository.schedules.values()
+            if assignment.date.year == 2026 and assignment.date.month == 3
+        ],
+        key=lambda item: item.date,
+    )
+    assert any(
+        assignment.date == date(2026, 3, 2) and assignment.shift_template_id == 1
+        for assignment in march_assignments
+    )
+    assert any(assignment.date == date(2026, 3, 3) and assignment.shift_template_id == 2 for assignment in march_assignments)
 
 
 def test_sync_device_attendance_uses_biometric_uid(monkeypatch):
@@ -615,27 +832,31 @@ def test_shift_swap_flow(monkeypatch):
     target = _make_user(2)
     approver = _make_user(3)
     FakeUserRepository.users = {1: requester, 2: target, 3: approver}
-    schedule_one = DailyShiftSchedule(
+    schedule_one = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 24),
         user=requester,
         user_id=requester.id,
-        shift_id=1,
+        shift_template_id=1,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    schedule_two = DailyShiftSchedule(
+    schedule_two = EmployeeShiftAssignment(
         id=2,
         date=date(2026, 3, 24),
         user=target,
         user_id=target.id,
-        shift_id=2,
+        shift_template_id=2,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    FakeDailyShiftScheduleRepository.schedules = {1: schedule_one, 2: schedule_two}
+    FakeEmployeeShiftAssignmentRepository.schedules = {1: schedule_one, 2: schedule_two}
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(attendance_service, "DailyShiftScheduleRepository", FakeDailyShiftScheduleRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
     monkeypatch.setattr(attendance_service, "ShiftSwapRepository", FakeShiftSwapRepository)
 
     created = anyio.run(
@@ -673,17 +894,17 @@ def test_attendance_summary_groups_days(monkeypatch):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    schedule = DailyShiftSchedule(
+    schedule = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 24),
         user=user,
         user_id=user.id,
-        shift=shift,
-        shift_id=shift.id,
+        shift_template=shift,
+        shift_template_id=shift.id,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    daily_record = DailyShiftRecord(
+    daily_record = DepartmentRosterDay(
         id=1,
         date=date(2026, 3, 24),
         department_id=department.id,
@@ -692,7 +913,7 @@ def test_attendance_summary_groups_days(monkeypatch):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    daily_record.schedules = [schedule]
+    daily_record.employee_shift_assignments = [schedule]
     holiday = Holiday(
         id=1,
         name="Holiday",
@@ -715,13 +936,17 @@ def test_attendance_summary_groups_days(monkeypatch):
     )
 
     FakeUserRepository.users = {user.id: user}
-    FakeDailyShiftRecordRepository.records = {daily_record.id: daily_record}
+    FakeEmployeeShiftAssignmentRepository.schedules = {schedule.id: schedule}
     FakeAttendanceRecordRepository.records = {record.id: record}
     FakeHolidayRepository.holidays = {holiday.id: holiday}
     FakeOvertimeRepository.overtime_requests = {overtime.id: overtime}
 
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(attendance_service, "DailyShiftRecordRepository", FakeDailyShiftRecordRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
     monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
     monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)

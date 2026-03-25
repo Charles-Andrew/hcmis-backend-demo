@@ -10,21 +10,21 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.models.attendance import (
     AttendanceRecord,
-    DailyShiftRecord,
-    DailyShiftSchedule,
+    DepartmentRosterDay,
+    EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
-    Shift,
+    ShiftTemplate,
     ShiftSwapRequest,
 )
 from app.models.department import Department
 from app.repositories.attendance import (
     AttendanceRecordRepository,
-    DailyShiftRecordRepository,
-    DailyShiftScheduleRepository,
+    DepartmentRosterDayRepository,
+    EmployeeShiftAssignmentRepository,
     HolidayRepository,
     OvertimeRepository,
-    ShiftRepository,
+    ShiftTemplateRepository,
     ShiftSwapRepository,
 )
 from app.repositories.departments import DepartmentRepository
@@ -36,18 +36,23 @@ from app.schemas.attendance import (
     AttendanceSummaryDayRead,
     AttendanceSummaryRead,
     DepartmentScheduleUpdateRequest,
-    DailyShiftRecordCreateRequest,
-    DailyShiftScheduleCreateRequest,
-    DailyShiftScheduleRead,
+    DepartmentRosterDayCreateRequest,
+    EmployeeShiftAssignmentCreateRequest,
+    EmployeeShiftAssignmentCopyPreviousMonthRequest,
+    EmployeeShiftAssignmentCopyPreviousMonthResponse,
+    EmployeeShiftAssignmentGenerateMonthRequest,
+    EmployeeShiftAssignmentGenerateMonthResponse,
+    EmployeeShiftAssignmentRead,
+    EmployeeShiftAssignmentUpdateRequest,
     HolidayCreateRequest,
     HolidayRead,
     HolidayUpdateRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRespondRequest,
-    ShiftCreateRequest,
+    ShiftTemplateCreateRequest,
     ShiftSwapRequestCreateRequest,
     ShiftSwapRequestRespondRequest,
-    ShiftUpdateRequest,
+    ShiftTemplateUpdateRequest,
 )
 
 
@@ -69,7 +74,7 @@ async def _get_department_with_shifts(
 ) -> Department:
     statement = (
         select(Department)
-        .options(selectinload(Department.shifts))
+        .options(selectinload(Department.shift_templates))
         .where(Department.id == department_id)
     )
     result = await session.execute(statement)
@@ -79,12 +84,14 @@ async def _get_department_with_shifts(
     return department
 
 
-async def list_shifts(session: AsyncSession) -> list[Shift]:
-    return await ShiftRepository(session).list()
+async def list_shift_templates(session: AsyncSession) -> list[ShiftTemplate]:
+    return await ShiftTemplateRepository(session).list()
 
 
-async def create_shift(session: AsyncSession, payload: ShiftCreateRequest) -> Shift:
-    repository = ShiftRepository(session)
+async def create_shift_template(
+    session: AsyncSession, payload: ShiftTemplateCreateRequest
+) -> ShiftTemplate:
+    repository = ShiftTemplateRepository(session)
     existing = await repository.get_by_identity(
         payload.description,
         payload.start_time,
@@ -95,7 +102,7 @@ async def create_shift(session: AsyncSession, payload: ShiftCreateRequest) -> Sh
     if existing is not None:
         raise ConflictError("A shift with the same times already exists.")
 
-    shift = Shift(
+    shift = ShiftTemplate(
         description=payload.description,
         start_time=payload.start_time,
         end_time=payload.end_time,
@@ -106,10 +113,10 @@ async def create_shift(session: AsyncSession, payload: ShiftCreateRequest) -> Sh
     return await repository.create(shift)
 
 
-async def update_shift(
-    session: AsyncSession, shift_id: int, payload: ShiftUpdateRequest
-) -> Shift:
-    repository = ShiftRepository(session)
+async def update_shift_template(
+    session: AsyncSession, shift_id: int, payload: ShiftTemplateUpdateRequest
+) -> ShiftTemplate:
+    repository = ShiftTemplateRepository(session)
     shift = await repository.get_by_id(shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
@@ -120,8 +127,8 @@ async def update_shift(
     return await repository.save(shift)
 
 
-async def delete_shift(session: AsyncSession, shift_id: int) -> str:
-    repository = ShiftRepository(session)
+async def delete_shift_template(session: AsyncSession, shift_id: int) -> str:
+    repository = ShiftTemplateRepository(session)
     shift = await repository.get_by_id(shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
@@ -137,21 +144,21 @@ async def update_department_schedule(
     session: AsyncSession, department_id: int, payload: DepartmentScheduleUpdateRequest
 ) -> Department:
     department_repository = DepartmentRepository(session)
-    shift_repository = ShiftRepository(session)
+    shift_repository = ShiftTemplateRepository(session)
     department = await department_repository.get_by_id(department_id)
     if department is None:
         raise NotFoundError("Department not found.")
 
-    selected_shifts: list[Shift] = []
+    selected_shifts: list[ShiftTemplate] = []
     for shift_id in dict.fromkeys(payload.shift_ids):
         shift = await shift_repository.get_by_id(shift_id)
         if shift is None:
             raise NotFoundError("Shift not found.")
         selected_shifts.append(shift)
 
-    department.workweek = payload.workweek
-    department.shifts.clear()
-    department.shifts.extend(selected_shifts)
+    department.default_workweek = payload.workweek
+    department.shift_templates.clear()
+    department.shift_templates.extend(selected_shifts)
     await department_repository.save(department)
     return await _get_department_with_shifts(session, department_id)
 
@@ -164,74 +171,209 @@ async def get_department_schedule(
 
 async def list_daily_shift_records(
     session: AsyncSession, department_id: int, year: int, month: int
-) -> list[DailyShiftRecord]:
-    return await DailyShiftRecordRepository(session).list_for_department_month(
+) -> list[DepartmentRosterDay]:
+    return await DepartmentRosterDayRepository(session).list_for_department_month(
         department_id, year, month
     )
 
 
 async def create_daily_shift_record(
-    session: AsyncSession, payload: DailyShiftRecordCreateRequest
-) -> DailyShiftRecord:
-    repository = DailyShiftRecordRepository(session)
+    session: AsyncSession, payload: DepartmentRosterDayCreateRequest
+) -> DepartmentRosterDay:
+    repository = DepartmentRosterDayRepository(session)
     existing = await repository.get_by_department_date(
         payload.department_id, payload.date
     )
     if existing is not None:
         raise ConflictError("Daily shift record already exists for the selected date.")
 
-    record = DailyShiftRecord(
+    record = DepartmentRosterDay(
         date=payload.date,
         department_id=payload.department_id,
         is_approved=payload.is_approved,
     )
     record = await repository.create(record)
     if payload.schedule_ids:
-        schedule_repo = DailyShiftScheduleRepository(session)
+        schedule_repo = EmployeeShiftAssignmentRepository(session)
         schedules = []
         for schedule_id in payload.schedule_ids:
             schedule = await schedule_repo.get_by_id(schedule_id)
             if schedule is None:
                 raise NotFoundError("Daily shift schedule not found.")
             schedules.append(schedule)
-        record.schedules.extend(schedules)
+        record.employee_shift_assignments.extend(schedules)
         record = await repository.save(record)
     return record
 
 
-async def create_daily_shift_schedule(
-    session: AsyncSession, payload: DailyShiftScheduleCreateRequest
-) -> DailyShiftSchedule:
+async def create_employee_shift_assignment(
+    session: AsyncSession, payload: EmployeeShiftAssignmentCreateRequest
+) -> EmployeeShiftAssignment:
+    repository = EmployeeShiftAssignmentRepository(session)
     user = await UserRepository(session).get_by_id(payload.user_id)
     if user is None:
         raise NotFoundError("User not found.")
-    shift = await ShiftRepository(session).get_by_id(payload.shift_id)
+    shift = await ShiftTemplateRepository(session).get_by_id(payload.shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
-    schedule = DailyShiftSchedule(
+    existing = await repository.get_by_user_date(payload.user_id, payload.date)
+    if existing is not None:
+        raise ConflictError("A shift assignment already exists for the selected employee and date.")
+    schedule = EmployeeShiftAssignment(
         date=payload.date,
         user_id=payload.user_id,
-        shift_id=payload.shift_id,
+        shift_template_id=payload.shift_id,
     )
-    return await DailyShiftScheduleRepository(session).create(schedule)
+    return await repository.create(schedule)
 
 
-async def list_daily_shift_schedules(
+async def copy_previous_month_employee_shift_assignments(
+    session: AsyncSession,
+    payload: EmployeeShiftAssignmentCopyPreviousMonthRequest,
+) -> EmployeeShiftAssignmentCopyPreviousMonthResponse:
+    repository = EmployeeShiftAssignmentRepository(session)
+    user = await UserRepository(session).get_by_id(payload.user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+
+    if payload.month == 1:
+        source_year = payload.year - 1
+        source_month = 12
+    else:
+        source_year = payload.year
+        source_month = payload.month - 1
+
+    source_assignments = await repository.list_for_user_month(
+        payload.user_id, source_year, source_month
+    )
+    if not source_assignments:
+        raise NotFoundError("No assignments found in the previous month to copy.")
+
+    target_assignments = await repository.list_for_user_month(
+        payload.user_id, payload.year, payload.month
+    )
+    for assignment in target_assignments:
+        await repository.delete(assignment)
+
+    copied_count = 0
+    skipped_count = 0
+    target_last_day = monthrange(payload.year, payload.month)[1]
+
+    for source_assignment in source_assignments:
+        day = source_assignment.date.day
+        if day > target_last_day:
+            skipped_count += 1
+            continue
+
+        copied_assignment = EmployeeShiftAssignment(
+            date=date(payload.year, payload.month, day),
+            user_id=payload.user_id,
+            shift_template_id=source_assignment.shift_template_id,
+        )
+        await repository.create(copied_assignment)
+        copied_count += 1
+
+    return EmployeeShiftAssignmentCopyPreviousMonthResponse(
+        copied_count=copied_count,
+        skipped_count=skipped_count,
+    )
+
+
+async def generate_month_employee_shift_assignments(
+    session: AsyncSession,
+    payload: EmployeeShiftAssignmentGenerateMonthRequest,
+) -> EmployeeShiftAssignmentGenerateMonthResponse:
+    repository = EmployeeShiftAssignmentRepository(session)
+    department_repository = DepartmentRepository(session)
+    user = await UserRepository(session).get_by_id(payload.user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+    if user.department_id is None:
+        raise ConflictError("The selected user does not belong to a department.")
+
+    department = await department_repository.get_by_id(user.department_id)
+    if department is None:
+        raise NotFoundError("Department not found.")
+
+    allowed_templates = list(department.shift_templates)
+    if not allowed_templates:
+        raise ConflictError("The department does not have any allowed shift templates.")
+
+    selected_template = None
+    if payload.shift_id is not None:
+        selected_template = next(
+            (template for template in allowed_templates if template.id == payload.shift_id),
+            None,
+        )
+        if selected_template is None:
+            raise ConflictError("The selected shift template is not allowed for this department.")
+    else:
+        selected_template = allowed_templates[0]
+
+    workweek_days = {day.strip() for day in department.default_workweek if day.strip()}
+    if not workweek_days:
+        raise ConflictError("The department does not have a default workweek configured.")
+
+    generated_count = 0
+    skipped_count = 0
+    for day in range(1, monthrange(payload.year, payload.month)[1] + 1):
+        current_date = date(payload.year, payload.month, day)
+        weekday_name = day_name[current_date.weekday()]
+        if weekday_name not in workweek_days:
+            continue
+
+        existing = await repository.get_by_user_date(payload.user_id, current_date)
+        if existing is not None:
+            skipped_count += 1
+            continue
+
+        await repository.create(
+            EmployeeShiftAssignment(
+                date=current_date,
+                user_id=payload.user_id,
+                shift_template_id=selected_template.id,
+            )
+        )
+        generated_count += 1
+
+    return EmployeeShiftAssignmentGenerateMonthResponse(
+        generated_count=generated_count,
+        skipped_count=skipped_count,
+    )
+
+
+async def list_employee_shift_assignments(
     session: AsyncSession, department_id: int, year: int, month: int
-) -> list[DailyShiftSchedule]:
-    return await DailyShiftScheduleRepository(session).list_for_department_month(
+) -> list[EmployeeShiftAssignment]:
+    return await EmployeeShiftAssignmentRepository(session).list_for_department_month(
         department_id, year, month
     )
 
 
-async def delete_daily_shift_schedule(
+async def delete_employee_shift_assignment(
     session: AsyncSession, schedule_id: int
 ) -> None:
-    repository = DailyShiftScheduleRepository(session)
+    repository = EmployeeShiftAssignmentRepository(session)
     schedule = await repository.get_by_id(schedule_id)
     if schedule is None:
         raise NotFoundError("Daily shift schedule not found.")
     await repository.delete(schedule)
+
+
+async def update_employee_shift_assignment(
+    session: AsyncSession,
+    schedule_id: int,
+    payload: EmployeeShiftAssignmentUpdateRequest,
+) -> EmployeeShiftAssignment:
+    repository = EmployeeShiftAssignmentRepository(session)
+    schedule = await repository.get_by_id(schedule_id)
+    if schedule is None:
+        raise NotFoundError("Daily shift schedule not found.")
+    shift = await ShiftTemplateRepository(session).get_by_id(payload.shift_id)
+    if shift is None:
+        raise NotFoundError("Shift not found.")
+    schedule.shift_template_id = payload.shift_id
+    return await repository.save(schedule)
 
 
 async def list_attendance_records(
@@ -419,7 +561,7 @@ async def create_shift_swap_request(
     session: AsyncSession, payload: ShiftSwapRequestCreateRequest
 ) -> ShiftSwapRequest:
     user_repository = UserRepository(session)
-    schedule_repository = DailyShiftScheduleRepository(session)
+    schedule_repository = EmployeeShiftAssignmentRepository(session)
     for user_id in (payload.requested_by_id, payload.requested_for_id, payload.approver_id):
         if await user_repository.get_by_id(user_id) is None:
             raise NotFoundError("User not found.")
@@ -481,12 +623,8 @@ async def get_attendance_summary(
         datetime.combine(start, datetime.min.time(), tzinfo=UTC),
         datetime.combine(end, datetime.max.time(), tzinfo=UTC),
     )
-    schedules = (
-        await DailyShiftRecordRepository(session).list_for_department_month(
-            user.department_id or 0, year, month
-        )
-        if user.department_id
-        else []
+    assignments = await EmployeeShiftAssignmentRepository(session).list_for_user_month(
+        user_id, year, month
     )
     holidays = await HolidayRepository(session).list(year=year)
     overtime = await OvertimeRepository(session).list_for_user(user_id)
@@ -495,12 +633,9 @@ async def get_attendance_summary(
     for record in attendance_records:
         records_by_day.setdefault(record.timestamp.astimezone().day, []).append(record)
 
-    schedules_by_day: dict[int, DailyShiftSchedule] = {}
-    for record in schedules:
-        if record.schedules:
-            for schedule in record.schedules:
-                if schedule.user_id == user_id:
-                    schedules_by_day[record.date.day] = schedule
+    assignments_by_day: dict[int, EmployeeShiftAssignment] = {}
+    for assignment in assignments:
+        assignments_by_day[assignment.date.day] = assignment
 
     holidays_by_day: dict[int, list[Holiday]] = {}
     for holiday in holidays:
@@ -521,8 +656,8 @@ async def get_attendance_summary(
             AttendanceSummaryDayRead(
                 day=day,
                 day_name=day_name[date(year, month, day).weekday()],
-                shift=DailyShiftScheduleRead.model_validate(schedules_by_day[day])
-                if day in schedules_by_day
+                shift=EmployeeShiftAssignmentRead.model_validate(assignments_by_day[day])
+                if day in assignments_by_day
                 else None,
                 attendance_records=[
                     AttendanceRecordRead.model_validate(record)
@@ -537,3 +672,12 @@ async def get_attendance_summary(
         )
 
     return AttendanceSummaryRead(year=year, month=month, days=summary_days)
+
+
+list_shifts = list_shift_templates
+create_shift = create_shift_template
+update_shift = update_shift_template
+delete_shift = delete_shift_template
+create_daily_shift_schedule = create_employee_shift_assignment
+list_daily_shift_schedules = list_employee_shift_assignments
+delete_daily_shift_schedule = delete_employee_shift_assignment

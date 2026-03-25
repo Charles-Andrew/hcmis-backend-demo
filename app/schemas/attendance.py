@@ -9,7 +9,7 @@ from app.schemas.department import DepartmentRead
 from app.schemas.user import UserRead
 
 
-class ShiftRead(BaseModel):
+class ShiftTemplateRead(BaseModel):
     id: int
     description: str
     start_time: time | None = None
@@ -23,18 +23,18 @@ class ShiftRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class DepartmentScheduleRead(BaseModel):
+class DepartmentShiftPolicyRead(BaseModel):
     id: int
     name: str
     code: str
     workweek: list[str] = Field(default_factory=list)
     is_active: bool
-    shifts: list[ShiftRead] = Field(default_factory=list)
+    shifts: list["ShiftTemplateRead"] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class ShiftCreateRequest(BaseModel):
+class ShiftTemplateCreateRequest(BaseModel):
     description: str = Field(min_length=1, max_length=255)
     start_time: time
     end_time: time
@@ -43,7 +43,7 @@ class ShiftCreateRequest(BaseModel):
     is_active: bool = True
 
 
-class ShiftUpdateRequest(BaseModel):
+class ShiftTemplateUpdateRequest(BaseModel):
     description: str | None = Field(default=None, min_length=1, max_length=255)
     start_time: time | None = None
     end_time: time | None = None
@@ -76,39 +76,66 @@ class AttendanceRecordUpdateRequest(BaseModel):
     punch: Literal["IN", "OUT"] | None = None
 
 
-class DailyShiftScheduleRead(BaseModel):
+class EmployeeShiftAssignmentRead(BaseModel):
     id: int
     date: date
     user_id: int
     shift_id: int
     user: UserRead | None = None
-    shift: ShiftRead | None = None
+    shift: ShiftTemplateRead | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class DailyShiftScheduleCreateRequest(BaseModel):
+class EmployeeShiftAssignmentCreateRequest(BaseModel):
     date: date
     user_id: int
     shift_id: int
 
 
-class DailyShiftRecordRead(BaseModel):
+class EmployeeShiftAssignmentUpdateRequest(BaseModel):
+    shift_id: int
+
+
+class EmployeeShiftAssignmentCopyPreviousMonthRequest(BaseModel):
+    user_id: int
+    year: int
+    month: int
+
+
+class EmployeeShiftAssignmentCopyPreviousMonthResponse(BaseModel):
+    copied_count: int
+    skipped_count: int
+
+
+class EmployeeShiftAssignmentGenerateMonthRequest(BaseModel):
+    user_id: int
+    year: int
+    month: int
+    shift_id: int | None = None
+
+
+class EmployeeShiftAssignmentGenerateMonthResponse(BaseModel):
+    generated_count: int
+    skipped_count: int
+
+
+class DepartmentRosterDayRead(BaseModel):
     id: int
     date: date
     department_id: int
     is_approved: bool
     department: DepartmentRead | None = None
-    schedules: list[DailyShiftScheduleRead] = Field(default_factory=list)
+    schedules: list[EmployeeShiftAssignmentRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class DailyShiftRecordCreateRequest(BaseModel):
+class DepartmentRosterDayCreateRequest(BaseModel):
     date: date
     department_id: int
     schedule_ids: list[int] = Field(default_factory=list)
@@ -204,7 +231,7 @@ class ShiftSwapRequestRespondRequest(BaseModel):
 class AttendanceSummaryDayRead(BaseModel):
     day: int
     day_name: str
-    shift: DailyShiftScheduleRead | None = None
+    shift: EmployeeShiftAssignmentRead | None = None
     attendance_records: list[AttendanceRecordRead] = Field(default_factory=list)
     holidays: list[HolidayRead] = Field(default_factory=list)
     overtime_approved: bool = False
@@ -214,3 +241,13 @@ class AttendanceSummaryRead(BaseModel):
     year: int
     month: int
     days: list[AttendanceSummaryDayRead]
+
+
+ShiftRead = ShiftTemplateRead
+DepartmentScheduleRead = DepartmentShiftPolicyRead
+ShiftCreateRequest = ShiftTemplateCreateRequest
+ShiftUpdateRequest = ShiftTemplateUpdateRequest
+DailyShiftScheduleRead = EmployeeShiftAssignmentRead
+DailyShiftScheduleCreateRequest = EmployeeShiftAssignmentCreateRequest
+DailyShiftRecordRead = DepartmentRosterDayRead
+DailyShiftRecordCreateRequest = DepartmentRosterDayCreateRequest

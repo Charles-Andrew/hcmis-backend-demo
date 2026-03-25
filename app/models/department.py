@@ -14,7 +14,7 @@ class Department(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    workweek: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    default_workweek: Mapped[list[str]] = mapped_column("workweek", JSON, default=list, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -27,7 +27,19 @@ class Department(Base):
     leave_approver = relationship(
         "LeaveApprover", back_populates="department", uselist=False
     )
-    shifts = relationship(
-        "Shift", secondary="department_shifts", back_populates="departments"
+    shift_templates = relationship(
+        "ShiftTemplate", secondary="department_shifts", back_populates="departments"
     )
-    daily_shift_records = relationship("DailyShiftRecord", back_populates="department")
+    department_roster_days = relationship("DepartmentRosterDay", back_populates="department")
+
+    @property
+    def workweek(self) -> list[str]:
+        return self.default_workweek
+
+    @workweek.setter
+    def workweek(self, value: list[str]) -> None:
+        self.default_workweek = value
+
+    @property
+    def shifts(self):
+        return self.shift_templates

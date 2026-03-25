@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.attendance import DailyShiftRecord, DailyShiftSchedule
+from app.models.attendance import DepartmentRosterDay, EmployeeShiftAssignment
 from app.models.department import Department
 from app.models.leave import LeaveRequest
 from app.models.performance import Evaluation, UserEvaluation
@@ -44,7 +44,9 @@ class ReportsRepository:
             select(Department)
             .options(
                 selectinload(Department.users),
-                selectinload(Department.daily_shift_records).selectinload(DailyShiftRecord.schedules),
+                selectinload(Department.department_roster_days).selectinload(
+                    DepartmentRosterDay.employee_shift_assignments
+                ),
             )
             .order_by(Department.name.asc())
         )
@@ -52,18 +54,20 @@ class ReportsRepository:
 
     async def list_daily_shift_records(
         self, selected_date: date
-    ) -> list[DailyShiftRecord]:
+    ) -> list[DepartmentRosterDay]:
         result = await self.session.execute(
-            select(DailyShiftRecord)
+            select(DepartmentRosterDay)
             .options(
-                selectinload(DailyShiftRecord.department),
-                selectinload(DailyShiftRecord.schedules)
-                .selectinload(DailyShiftSchedule.user)
+                selectinload(DepartmentRosterDay.department),
+                selectinload(DepartmentRosterDay.employee_shift_assignments)
+                .selectinload(EmployeeShiftAssignment.user)
                 .selectinload(User.department),
-                selectinload(DailyShiftRecord.schedules).selectinload(DailyShiftSchedule.shift),
+                selectinload(DepartmentRosterDay.employee_shift_assignments).selectinload(
+                    EmployeeShiftAssignment.shift_template
+                ),
             )
-            .where(DailyShiftRecord.date == selected_date)
-            .order_by(DailyShiftRecord.department_id.asc())
+            .where(DepartmentRosterDay.date == selected_date)
+            .order_by(DepartmentRosterDay.department_id.asc())
         )
         return list(result.scalars().unique().all())
 

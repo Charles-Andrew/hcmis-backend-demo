@@ -3,11 +3,11 @@ from app.models.app_log import AppLog
 from app.models.chat import Message
 from app.models.attendance import (
     AttendanceRecord,
-    DailyShiftRecord,
-    DailyShiftSchedule,
+    DepartmentRosterDay,
+    EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
-    Shift,
+    ShiftTemplate,
     ShiftSwapRequest,
 )
 from app.models.department import Department
@@ -31,8 +31,8 @@ __all__ = [
     "Base",
     "AppLog",
     "AttendanceRecord",
-    "DailyShiftRecord",
-    "DailyShiftSchedule",
+    "DepartmentRosterDay",
+    "EmployeeShiftAssignment",
     "Department",
     "Message",
     "LeaveApprover",
@@ -53,7 +53,7 @@ __all__ = [
     "OvertimeRequest",
     "ThirteenthMonthPay",
     "ThirteenthMonthPayVariableDeduction",
-    "Shift",
+    "ShiftTemplate",
     "ShiftSwapRequest",
     "User",
 ]

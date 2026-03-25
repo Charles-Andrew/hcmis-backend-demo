@@ -66,7 +66,7 @@ class User(Base):
     )
     leave_credit = relationship("LeaveCredit", back_populates="user", uselist=False)
     attendance_records = relationship("AttendanceRecord", back_populates="user")
-    daily_shift_schedules = relationship("DailyShiftSchedule", back_populates="user")
+    employee_shift_assignments = relationship("EmployeeShiftAssignment", back_populates="user")
     overtime_requests = relationship(
         "OvertimeRequest",
         foreign_keys="OvertimeRequest.user_id",
@@ -104,3 +104,7 @@ class User(Base):
         foreign_keys="Message.receiver_id",
         back_populates="receiver",
     )
+
+    @property
+    def daily_shift_schedules(self):
+        return self.employee_shift_assignments

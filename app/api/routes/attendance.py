@@ -8,11 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db_session, require_staff_user
 from app.models.attendance import (
     AttendanceRecord,
-    DailyShiftRecord,
-    DailyShiftSchedule,
+    DepartmentRosterDay,
+    EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
-    Shift,
+    ShiftTemplate,
     ShiftSwapRequest,
 )
 from app.models.department import Department
@@ -22,99 +22,116 @@ from app.schemas.attendance import (
     AttendanceRecordRead,
     AttendanceRecordUpdateRequest,
     AttendanceSummaryRead,
-    DepartmentScheduleRead,
+    DepartmentShiftPolicyRead,
     DepartmentScheduleUpdateRequest,
-    DailyShiftRecordCreateRequest,
-    DailyShiftRecordRead,
-    DailyShiftScheduleCreateRequest,
-    DailyShiftScheduleRead,
+    DepartmentRosterDayCreateRequest,
+    DepartmentRosterDayRead,
+    EmployeeShiftAssignmentCreateRequest,
+    EmployeeShiftAssignmentCopyPreviousMonthRequest,
+    EmployeeShiftAssignmentCopyPreviousMonthResponse,
+    EmployeeShiftAssignmentGenerateMonthRequest,
+    EmployeeShiftAssignmentGenerateMonthResponse,
+    EmployeeShiftAssignmentRead,
+    EmployeeShiftAssignmentUpdateRequest,
     HolidayCreateRequest,
     HolidayRead,
     HolidayUpdateRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRead,
     OvertimeRequestRespondRequest,
-    ShiftCreateRequest,
-    ShiftRead,
+    ShiftTemplateCreateRequest,
+    ShiftTemplateRead,
     ShiftSwapRequestCreateRequest,
     ShiftSwapRequestRead,
     ShiftSwapRequestRespondRequest,
-    ShiftUpdateRequest,
+    ShiftTemplateUpdateRequest,
 )
 from app.services.attendance import (
     create_attendance_record,
     create_daily_shift_record,
-    create_daily_shift_schedule,
+    create_employee_shift_assignment,
     create_holiday,
+    copy_previous_month_employee_shift_assignments,
     create_overtime_request,
-    create_shift,
+    generate_month_employee_shift_assignments,
+    create_shift_template,
     create_shift_swap_request,
     delete_attendance_record,
     delete_holiday,
     delete_overtime_request,
-    delete_shift,
-    delete_daily_shift_schedule,
+    delete_shift_template,
+    delete_employee_shift_assignment,
     delete_shift_swap_request,
     get_attendance_summary,
     list_attendance_records,
     list_daily_shift_records,
-    list_daily_shift_schedules,
+    list_employee_shift_assignments,
     list_holidays,
     list_overtime_requests,
     list_shift_swap_requests,
-    list_shifts,
+    list_shift_templates,
     get_department_schedule,
     respond_to_overtime_request,
     respond_to_shift_swap_request,
     sync_device_attendance,
     update_attendance_record,
     update_department_schedule,
+    update_employee_shift_assignment,
     update_holiday,
-    update_shift,
+    update_shift_template,
 )
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 
-@router.get("/shifts", response_model=list[ShiftRead])
-async def get_shifts(
+@router.get("/shifts", response_model=list[ShiftTemplateRead], include_in_schema=False)
+@router.get("/shift-templates", response_model=list[ShiftTemplateRead])
+async def get_shift_templates(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[Shift]:
-    return await list_shifts(session)
+) -> list[ShiftTemplate]:
+    return await list_shift_templates(session)
 
 
-@router.post("/shifts", response_model=ShiftRead, status_code=status.HTTP_201_CREATED)
-async def post_shift(
-    payload: ShiftCreateRequest,
+@router.post("/shifts", response_model=ShiftTemplateRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post("/shift-templates", response_model=ShiftTemplateRead, status_code=status.HTTP_201_CREATED)
+async def post_shift_template(
+    payload: ShiftTemplateCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> Shift:
-    return await create_shift(session, payload)
+) -> ShiftTemplate:
+    return await create_shift_template(session, payload)
 
 
-@router.patch("/shifts/{shift_id}", response_model=ShiftRead)
-async def patch_shift(
+@router.patch("/shifts/{shift_id}", response_model=ShiftTemplateRead, include_in_schema=False)
+@router.patch("/shift-templates/{shift_id}", response_model=ShiftTemplateRead)
+async def patch_shift_template(
     shift_id: int,
-    payload: ShiftUpdateRequest,
+    payload: ShiftTemplateUpdateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> Shift:
-    return await update_shift(session, shift_id, payload)
+) -> ShiftTemplate:
+    return await update_shift_template(session, shift_id, payload)
 
 
-@router.delete("/shifts/{shift_id}", response_model=str)
-async def remove_shift(
+@router.delete("/shifts/{shift_id}", response_model=str, include_in_schema=False)
+@router.delete("/shift-templates/{shift_id}", response_model=str)
+async def remove_shift_template(
     shift_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> str:
-    return await delete_shift(session, shift_id)
+    return await delete_shift_template(session, shift_id)
 
 
 @router.patch(
     "/departments/{department_id}/schedule",
-    response_model=DepartmentScheduleRead,
+    response_model=DepartmentShiftPolicyRead,
+    include_in_schema=False,
+)
+@router.patch(
+    "/departments/{department_id}/shift-policy",
+    response_model=DepartmentShiftPolicyRead,
 )
 async def patch_department_schedule(
     department_id: int,
@@ -125,7 +142,12 @@ async def patch_department_schedule(
     return await update_department_schedule(session, department_id, payload)
 
 
-@router.get("/departments/{department_id}/schedule", response_model=DepartmentScheduleRead)
+@router.get(
+    "/departments/{department_id}/schedule",
+    response_model=DepartmentShiftPolicyRead,
+    include_in_schema=False,
+)
+@router.get("/departments/{department_id}/shift-policy", response_model=DepartmentShiftPolicyRead)
 async def read_department_schedule(
     department_id: int,
     session: AsyncSession = Depends(get_db_session),
@@ -134,33 +156,71 @@ async def read_department_schedule(
     return await get_department_schedule(session, department_id)
 
 
-@router.get("/schedules", response_model=list[DailyShiftScheduleRead])
-async def get_daily_shift_schedules(
+@router.get("/schedules", response_model=list[EmployeeShiftAssignmentRead], include_in_schema=False)
+@router.get("/shift-assignments", response_model=list[EmployeeShiftAssignmentRead])
+async def get_employee_shift_assignments(
     department_id: int = Query(...),
     year: int = Query(...),
     month: int = Query(...),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[DailyShiftSchedule]:
-    return await list_daily_shift_schedules(session, department_id, year, month)
+) -> list[EmployeeShiftAssignment]:
+    return await list_employee_shift_assignments(session, department_id, year, month)
 
 
-@router.post("/schedules", response_model=DailyShiftScheduleRead, status_code=status.HTTP_201_CREATED)
-async def post_daily_shift_schedule(
-    payload: DailyShiftScheduleCreateRequest,
+@router.post("/schedules", response_model=EmployeeShiftAssignmentRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post("/shift-assignments", response_model=EmployeeShiftAssignmentRead, status_code=status.HTTP_201_CREATED)
+async def post_employee_shift_assignment(
+    payload: EmployeeShiftAssignmentCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> DailyShiftSchedule:
-    return await create_daily_shift_schedule(session, payload)
+) -> EmployeeShiftAssignment:
+    return await create_employee_shift_assignment(session, payload)
 
 
-@router.delete("/schedules/{schedule_id}", response_model=None)
-async def remove_daily_shift_schedule(
+@router.post(
+    "/shift-assignments/copy-previous-month",
+    response_model=EmployeeShiftAssignmentCopyPreviousMonthResponse,
+)
+async def copy_previous_month_shift_assignments(
+    payload: EmployeeShiftAssignmentCopyPreviousMonthRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> EmployeeShiftAssignmentCopyPreviousMonthResponse:
+    return await copy_previous_month_employee_shift_assignments(session, payload)
+
+
+@router.post(
+    "/shift-assignments/generate-month",
+    response_model=EmployeeShiftAssignmentGenerateMonthResponse,
+)
+async def generate_month_shift_assignments(
+    payload: EmployeeShiftAssignmentGenerateMonthRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> EmployeeShiftAssignmentGenerateMonthResponse:
+    return await generate_month_employee_shift_assignments(session, payload)
+
+
+@router.patch("/schedules/{schedule_id}", response_model=EmployeeShiftAssignmentRead, include_in_schema=False)
+@router.patch("/shift-assignments/{schedule_id}", response_model=EmployeeShiftAssignmentRead)
+async def patch_employee_shift_assignment(
+    schedule_id: int,
+    payload: EmployeeShiftAssignmentUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> EmployeeShiftAssignment:
+    return await update_employee_shift_assignment(session, schedule_id, payload)
+
+
+@router.delete("/schedules/{schedule_id}", response_model=None, include_in_schema=False)
+@router.delete("/shift-assignments/{schedule_id}", response_model=None)
+async def remove_employee_shift_assignment(
     schedule_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> None:
-    await delete_daily_shift_schedule(session, schedule_id)
+    await delete_employee_shift_assignment(session, schedule_id)
 
 
 @router.get("/records", response_model=list[AttendanceRecordRead])
@@ -202,23 +262,23 @@ async def remove_record(
     await delete_attendance_record(session, record_id)
 
 
-@router.get("/daily-shifts", response_model=list[DailyShiftRecordRead])
-async def get_daily_shift_records(
+@router.get("/daily-shifts", response_model=list[DepartmentRosterDayRead])
+async def get_department_roster_days(
     department_id: int = Query(...),
     year: int = Query(...),
     month: int = Query(...),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[DailyShiftRecord]:
+) -> list[DepartmentRosterDay]:
     return await list_daily_shift_records(session, department_id, year, month)
 
 
-@router.post("/daily-shifts", response_model=DailyShiftRecordRead, status_code=status.HTTP_201_CREATED)
-async def post_daily_shift_record(
-    payload: DailyShiftRecordCreateRequest,
+@router.post("/daily-shifts", response_model=DepartmentRosterDayRead, status_code=status.HTTP_201_CREATED)
+async def post_department_roster_day(
+    payload: DepartmentRosterDayCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> DailyShiftRecord:
+) -> DepartmentRosterDay:
     return await create_daily_shift_record(session, payload)
 
 

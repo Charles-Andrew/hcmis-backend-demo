@@ -124,6 +124,17 @@ Follow these rules before making changes.
 4. Summarize changed files and operational impact.
 5. Call out any follow-up work or residual risk.
 
+## Lean Ctx Tooling Preference
+
+- Prefer `lean_ctx` MCP tools for discovery and inspection work whenever possible.
+- Default command-to-tool mapping:
+- `ctx_tree` for directory/file discovery instead of broad `ls`/`find`.
+- `ctx_search` for code/text lookup instead of `grep`/manual scanning.
+- `ctx_read` and `ctx_multi_read` for file reads (use compact modes when full content is unnecessary).
+- `ctx_shell` for command execution when command output inspection is needed.
+- Use cache-aware workflows (`ctx_cache`, `ctx_metrics`) to reduce repeated context and token usage during iterative edits.
+- Fall back to raw shell commands only when `lean_ctx` cannot perform the needed task.
+
 ## Do Not
 
 - Do not hardcode secrets.

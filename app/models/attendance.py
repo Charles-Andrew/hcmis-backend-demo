@@ -18,14 +18,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.time import utc_now
 from app.models.base import Base
 
-department_shifts = Table(
+department_shift_templates = Table(
     "department_shifts",
     Base.metadata,
     Column("department_id", ForeignKey("departments.id"), primary_key=True),
     Column("shift_id", ForeignKey("shifts.id"), primary_key=True),
 )
 
-daily_shift_record_schedules = Table(
+department_roster_day_assignments = Table(
     "daily_shift_record_schedules",
     Base.metadata,
     Column("daily_shift_record_id", ForeignKey("daily_shift_records.id"), primary_key=True),
@@ -33,7 +33,7 @@ daily_shift_record_schedules = Table(
 )
 
 
-class Shift(Base):
+class ShiftTemplate(Base):
     __tablename__ = "shifts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -50,17 +50,23 @@ class Shift(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    departments = relationship("Department", secondary=department_shifts, back_populates="shifts")
-    daily_shift_schedules = relationship("DailyShiftSchedule", back_populates="shift")
+    departments = relationship(
+        "Department",
+        secondary=department_shift_templates,
+        back_populates="shift_templates",
+    )
+    employee_shift_assignments = relationship(
+        "EmployeeShiftAssignment", back_populates="shift_template"
+    )
 
 
-class DailyShiftSchedule(Base):
+class EmployeeShiftAssignment(Base):
     __tablename__ = "daily_shift_schedules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id"), index=True)
+    shift_template_id: Mapped[int] = mapped_column("shift_id", ForeignKey("shifts.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -68,16 +74,40 @@ class DailyShiftSchedule(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    user = relationship("User", back_populates="daily_shift_schedules")
-    shift = relationship("Shift", back_populates="daily_shift_schedules")
-    records = relationship(
-        "DailyShiftRecord",
-        secondary=daily_shift_record_schedules,
-        back_populates="schedules",
+    user = relationship("User", back_populates="employee_shift_assignments")
+    shift_template = relationship("ShiftTemplate", back_populates="employee_shift_assignments")
+    department_roster_days = relationship(
+        "DepartmentRosterDay",
+        secondary=department_roster_day_assignments,
+        back_populates="employee_shift_assignments",
     )
 
+    @property
+    def shift_id(self) -> int:
+        return self.shift_template_id
 
-class DailyShiftRecord(Base):
+    @shift_id.setter
+    def shift_id(self, value: int) -> None:
+        self.shift_template_id = value
+
+    @property
+    def shift(self):
+        return self.shift_template
+
+    @shift.setter
+    def shift(self, value) -> None:
+        self.shift_template = value
+
+    @property
+    def records(self):
+        return self.department_roster_days
+
+    @records.setter
+    def records(self, value) -> None:
+        self.department_roster_days = value
+
+
+class DepartmentRosterDay(Base):
     __tablename__ = "daily_shift_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -91,12 +121,20 @@ class DailyShiftRecord(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    department = relationship("Department", back_populates="daily_shift_records")
-    schedules = relationship(
-        "DailyShiftSchedule",
-        secondary=daily_shift_record_schedules,
-        back_populates="records",
+    department = relationship("Department", back_populates="department_roster_days")
+    employee_shift_assignments = relationship(
+        "EmployeeShiftAssignment",
+        secondary=department_roster_day_assignments,
+        back_populates="department_roster_days",
     )
+
+    @property
+    def schedules(self):
+        return self.employee_shift_assignments
+
+    @schedules.setter
+    def schedules(self, value) -> None:
+        self.employee_shift_assignments = value
 
 
 class Holiday(Base):
@@ -203,11 +241,19 @@ class ShiftSwapRequest(Base):
         "User", foreign_keys=[requested_for_id], back_populates="shift_swap_targets"
     )
     current_schedule = relationship(
-        "DailyShiftSchedule", foreign_keys=[current_schedule_id]
+        "EmployeeShiftAssignment", foreign_keys=[current_schedule_id]
     )
     requested_schedule = relationship(
-        "DailyShiftSchedule", foreign_keys=[requested_schedule_id]
+        "EmployeeShiftAssignment", foreign_keys=[requested_schedule_id]
     )
     approver = relationship(
         "User", foreign_keys=[approver_id], back_populates="shift_swap_approvals"
     )
+
+
+# Compatibility aliases while the database tables and older modules are phased out.
+Shift = ShiftTemplate
+DailyShiftSchedule = EmployeeShiftAssignment
+DailyShiftRecord = DepartmentRosterDay
+department_shifts = department_shift_templates
+daily_shift_record_schedules = department_roster_day_assignments

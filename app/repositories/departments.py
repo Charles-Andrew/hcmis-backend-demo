@@ -1,5 +1,6 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
 
@@ -14,7 +15,14 @@ class DepartmentRepository:
         return list(result.scalars().all())
 
     async def get_by_id(self, department_id: int) -> Department | None:
-        statement = select(Department).where(Department.id == department_id)
+        statement = (
+            select(Department)
+            .options(
+                selectinload(Department.shift_templates),
+                selectinload(Department.department_roster_days),
+            )
+            .where(Department.id == department_id)
+        )
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
@@ -42,4 +50,3 @@ class DepartmentRepository:
     async def delete(self, department: Department) -> None:
         await self.session.delete(department)
         await self.session.commit()
-
