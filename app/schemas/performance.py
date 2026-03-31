@@ -83,6 +83,7 @@ class EvaluationRead(BaseModel):
 
 
 class EvaluationCreateRequest(BaseModel):
+    evaluator_id: int | None = None
     positive_feedback: str | None = None
     improvement_suggestion: str | None = None
     content_data: list[dict] = Field(default_factory=list)
@@ -104,3 +105,146 @@ class EvaluationSummaryRead(BaseModel):
     positive_feedback: str | None = None
     improvement_suggestion: str | None = None
     self_evaluation: bool
+
+
+class EvaluationAssignmentRequest(BaseModel):
+    evaluator_id: int
+
+
+class UserEvaluationDomainSummaryRead(BaseModel):
+    domain_key: str
+    self_rating_mean: float
+    peer_rating_mean: float
+
+
+class UserEvaluationAggregateRead(BaseModel):
+    user_evaluation_id: int
+    evaluatee_id: int
+    questionnaire_id: int
+    quarter: str
+    year: int
+    is_finalized: bool
+    self_rating_overall_mean: float
+    peer_rating_overall_mean: float
+    domains: list[UserEvaluationDomainSummaryRead] = Field(default_factory=list)
+    peer_positive_feedback: list[str] = Field(default_factory=list)
+    peer_improvement_suggestions: list[str] = Field(default_factory=list)
+
+
+class SharedResourceRead(BaseModel):
+    id: int
+    uploader_id: int
+    resource_name: str
+    description: str | None = None
+    original_filename: str
+    content_type: str | None = None
+    size_bytes: int
+    is_confidential: bool
+    shared_user_ids: list[int] = Field(default_factory=list)
+    confidential_access_user_ids: list[int] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SharedResourceCreateRequest(BaseModel):
+    resource_name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    storage_key: str = Field(min_length=1, max_length=500)
+    original_filename: str = Field(min_length=1, max_length=255)
+    content_type: str | None = Field(default=None, max_length=255)
+    size_bytes: int = Field(default=0, ge=0)
+    shared_user_ids: list[int] = Field(default_factory=list)
+    is_confidential: bool = False
+    confidential_access_user_ids: list[int] = Field(default_factory=list)
+
+
+class SharedResourceUpdateRequest(BaseModel):
+    resource_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    is_confidential: bool | None = None
+
+
+class SharedResourceAccessUpdateRequest(BaseModel):
+    user_id: int
+
+
+class AnnouncementRead(BaseModel):
+    id: int
+    author_id: int
+    title: str
+    summary: str | None = None
+    content: str
+    status: str
+    published_at: datetime | None = None
+    archived_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnnouncementCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    summary: str | None = None
+    content: str = Field(min_length=1)
+
+
+class AnnouncementUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    summary: str | None = None
+    content: str | None = Field(default=None, min_length=1)
+
+
+class PollChoiceCreateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=255)
+
+
+class PollChoiceRead(BaseModel):
+    id: int
+    poll_id: int
+    text: str
+    position: int
+    vote_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PollRead(BaseModel):
+    id: int
+    author_id: int
+    question: str
+    description: str | None = None
+    allow_multiple_choices: bool
+    status: str
+    published_at: datetime | None = None
+    closed_at: datetime | None = None
+    archived_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    choices: list[PollChoiceRead] = Field(default_factory=list)
+    user_vote_choice_ids: list[int] = Field(default_factory=list)
+
+
+class PollCreateRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    allow_multiple_choices: bool = False
+    choices: list[PollChoiceCreateRequest] = Field(min_length=2)
+
+
+class PollUpdateRequest(BaseModel):
+    question: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    allow_multiple_choices: bool | None = None
+
+
+class PollVoteSubmitRequest(BaseModel):
+    choice_ids: list[int] = Field(min_length=1)
+
+
+class FeedItemRead(BaseModel):
+    item_type: str
+    announcement: AnnouncementRead | None = None
+    poll: PollRead | None = None

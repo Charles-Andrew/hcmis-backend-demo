@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,7 @@ from app.models.attendance import (
     ShiftTemplate,
     ShiftSwapRequest,
 )
+from app.models.user import User
 
 
 class ShiftTemplateRepository:
@@ -267,18 +268,66 @@ class OvertimeRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_for_user(self, user_id: int) -> list[OvertimeRequest]:
-        result = await self.session.execute(
-            select(OvertimeRequest).where(OvertimeRequest.user_id == user_id).order_by(OvertimeRequest.date.desc())
+    @staticmethod
+    def _base_statement():
+        return select(OvertimeRequest).options(
+            selectinload(OvertimeRequest.user).selectinload(User.department),
+            selectinload(OvertimeRequest.approver),
         )
+
+    async def list_for_user(self, user_id: int) -> list[OvertimeRequest]:
+        statement = self._base_statement().where(OvertimeRequest.user_id == user_id)
+        statement = statement.order_by(OvertimeRequest.date.desc(), OvertimeRequest.id.desc())
+        result = await self.session.execute(statement)
         return list(result.scalars().all())
 
     async def list_for_approver(self, approver_id: int) -> list[OvertimeRequest]:
-        result = await self.session.execute(
-            select(OvertimeRequest)
-            .where(OvertimeRequest.approver_id == approver_id)
-            .order_by(OvertimeRequest.date.desc())
+        statement = self._base_statement().where(OvertimeRequest.approver_id == approver_id)
+        statement = statement.order_by(OvertimeRequest.date.desc(), OvertimeRequest.id.desc())
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def list(
+        self,
+        *,
+        user_id: int | None = None,
+        approver_id: int | None = None,
+        year: int | None = None,
+        month: int | None = None,
+        status: str | None = None,
+        department_id: int | None = None,
+        query: str | None = None,
+    ) -> list[OvertimeRequest]:
+        statement = self._base_statement()
+
+        if user_id is not None:
+            statement = statement.where(OvertimeRequest.user_id == user_id)
+        if approver_id is not None:
+            statement = statement.where(OvertimeRequest.approver_id == approver_id)
+        if year is not None:
+            statement = statement.where(func.extract("year", OvertimeRequest.date) == year)
+        if month is not None:
+            statement = statement.where(func.extract("month", OvertimeRequest.date) == month)
+        if status is not None:
+            statement = statement.where(OvertimeRequest.status == status)
+        if department_id is not None:
+            statement = statement.where(OvertimeRequest.user.has(User.department_id == department_id))
+        if query:
+            lowered = f"%{query.lower()}%"
+            statement = statement.where(
+                OvertimeRequest.user.has(
+                    func.lower(User.first_name).like(lowered)
+                    | func.lower(User.last_name).like(lowered)
+                    | func.lower(User.email).like(lowered)
+                )
+            )
+
+        statement = statement.order_by(
+            OvertimeRequest.status.asc(),
+            OvertimeRequest.date.desc(),
+            OvertimeRequest.id.desc(),
         )
+        result = await self.session.execute(statement)
         return list(result.scalars().all())
 
     async def get_by_id(self, overtime_id: int) -> OvertimeRequest | None:

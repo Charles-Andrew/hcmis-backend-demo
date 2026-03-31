@@ -39,6 +39,10 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserWithCapabilitiesRead(UserRead):
+    capabilities: list[str] = Field(default_factory=list)
+
+
 class UserCreateRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)

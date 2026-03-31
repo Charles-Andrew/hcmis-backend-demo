@@ -5,6 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.capabilities import is_staff_user
 from app.core.security import decode_access_token
 from app.db.session import get_session
 from app.models.user import User
@@ -48,7 +49,7 @@ async def get_current_user(
 
 
 async def require_staff_user(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.is_superuser or current_user.role == "HR":
+    if is_staff_user(current_user):
         return current_user
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

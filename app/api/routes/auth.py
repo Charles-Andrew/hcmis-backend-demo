@@ -3,12 +3,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
+from app.core.capabilities import resolve_user_capabilities
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.department import Department
 from app.models.user import User
 from app.repositories.users import UserRepository
 from app.schemas.auth import AuthLoginRequest, AuthRegisterRequest, AuthResponse
-from app.schemas.user import UserRead
+from app.schemas.user import UserRead, UserWithCapabilitiesRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -82,13 +83,18 @@ async def login(
         )
 
     access_token = create_access_token(subject=str(user.id))
+    validated_user = UserWithCapabilitiesRead.model_validate(user).model_copy(
+        update={"capabilities": resolve_user_capabilities(user)}
+    )
     return AuthResponse(
         access_token=access_token,
         token_type="bearer",
-        user=UserRead.model_validate(user),
+        user=validated_user,
     )
 
 
-@router.get("/me", response_model=UserRead)
-async def me(current_user: User = Depends(get_current_user)) -> UserRead:
-    return UserRead.model_validate(current_user)
+@router.get("/me", response_model=UserWithCapabilitiesRead)
+async def me(current_user: User = Depends(get_current_user)) -> UserWithCapabilitiesRead:
+    return UserWithCapabilitiesRead.model_validate(current_user).model_copy(
+        update={"capabilities": resolve_user_capabilities(current_user)}
+    )

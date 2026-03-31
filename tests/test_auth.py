@@ -7,7 +7,7 @@ from app.core.time import utc_now
 from app.models.user import User
 from app.schemas.auth import AuthLoginRequest, AuthRegisterRequest
 from app.schemas.auth import AuthResponse
-from app.schemas.user import UserRead
+from app.schemas.user import UserRead, UserWithCapabilitiesRead
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -49,7 +49,7 @@ async def _login(payload: dict[str, str]) -> AuthResponse:
     )
 
 
-async def _me(user: User) -> UserRead:
+async def _me(user: User) -> UserWithCapabilitiesRead:
     return await auth_routes.me(current_user=user)
 
 
@@ -108,10 +108,12 @@ def test_login_returns_token_and_user(monkeypatch):
 
     assert response.token_type == "bearer"
     assert response.user.email == user.email
+    assert "view_dashboard_home" in response.user.capabilities
+    assert "access_hr_workspace" not in response.user.capabilities
     assert decode_access_token(response.access_token)["sub"] == "7"
 
 
-def test_me_returns_current_user():
+def test_me_returns_current_user_with_capabilities():
     user = User(
         id=11,
         email="current.user@example.com",
@@ -128,3 +130,26 @@ def test_me_returns_current_user():
     response = anyio.run(_me, user)
 
     assert response.email == user.email
+    assert "view_dashboard_home" in response.capabilities
+    assert "access_hr_workspace" not in response.capabilities
+
+
+def test_me_includes_hr_workspace_capability_for_hr_user():
+    user = User(
+        id=12,
+        email="hr.user@example.com",
+        password_hash="hashed",
+        first_name="HR",
+        last_name="User",
+        role="HR",
+        can_modify_shift=False,
+        is_active=True,
+        is_superuser=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    response = anyio.run(_me, user)
+
+    assert response.email == user.email
+    assert "access_hr_workspace" in response.capabilities

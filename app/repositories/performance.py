@@ -1,8 +1,23 @@
-from sqlalchemy import select
+from __future__ import annotations
+
+from typing import List
+
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.performance import Evaluation, Questionnaire, UserEvaluation
+from app.models.performance import (
+    Announcement,
+    Evaluation,
+    Poll,
+    PollChoice,
+    PollVote,
+    Questionnaire,
+    SharedResource,
+    SharedResourceConfidentialAccess,
+    SharedResourceShare,
+    UserEvaluation,
+)
 from app.models.user import User
 
 
@@ -10,7 +25,7 @@ class QuestionnaireRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, include_inactive: bool = False) -> list[Questionnaire]:
+    async def list(self, include_inactive: bool = False) -> List[Questionnaire]:
         statement = select(Questionnaire).order_by(Questionnaire.title)
         if not include_inactive:
             statement = statement.where(Questionnaire.is_active.is_(True))
@@ -56,7 +71,7 @@ class UserEvaluationRepository:
         quarter: str | None = None,
         year: int | None = None,
         is_finalized: bool | None = None,
-    ) -> list[UserEvaluation]:
+    ) -> List[UserEvaluation]:
         statement = (
             select(UserEvaluation)
             .options(
@@ -136,7 +151,7 @@ class EvaluationRepository:
         user_evaluation_id: int | None = None,
         evaluator_id: int | None = None,
         is_submitted: bool | None = None,
-    ) -> list[Evaluation]:
+    ) -> List[Evaluation]:
         statement = (
             select(Evaluation)
             .options(
@@ -197,5 +212,240 @@ class EvaluationRepository:
         return item
 
     async def delete(self, item: Evaluation) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+
+class SharedResourceRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_for_user(
+        self,
+        user_id: int,
+        uploader_id: int | None = None,
+        search: str | None = None,
+    ) -> List[SharedResource]:
+        statement = (
+            select(SharedResource)
+            .options(
+                selectinload(SharedResource.shares),
+                selectinload(SharedResource.confidential_access),
+            )
+            .join(
+                SharedResourceShare,
+                SharedResourceShare.resource_id == SharedResource.id,
+                isouter=True,
+            )
+            .where(
+                or_(
+                    SharedResource.uploader_id == user_id,
+                    SharedResourceShare.user_id == user_id,
+                )
+            )
+            .order_by(SharedResource.created_at.desc())
+        )
+        if uploader_id is not None:
+            statement = statement.where(SharedResource.uploader_id == uploader_id)
+        if search:
+            statement = statement.where(SharedResource.resource_name.ilike(f"%{search}%"))
+
+        result = await self.session.execute(statement)
+        return list(result.scalars().unique().all())
+
+    async def get_by_id(self, resource_id: int) -> SharedResource | None:
+        result = await self.session.execute(
+            select(SharedResource)
+            .options(
+                selectinload(SharedResource.shares),
+                selectinload(SharedResource.confidential_access),
+            )
+            .where(SharedResource.id == resource_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, item: SharedResource) -> SharedResource:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def save(self, item: SharedResource) -> SharedResource:
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def delete(self, item: SharedResource) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def get_share(
+        self,
+        resource_id: int,
+        user_id: int,
+    ) -> SharedResourceShare | None:
+        result = await self.session.execute(
+            select(SharedResourceShare).where(
+                SharedResourceShare.resource_id == resource_id,
+                SharedResourceShare.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_share(
+        self,
+        resource_id: int,
+        user_id: int,
+    ) -> SharedResourceShare:
+        item = SharedResourceShare(resource_id=resource_id, user_id=user_id)
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def remove_share(self, item: SharedResourceShare) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def get_confidential_access(
+        self,
+        resource_id: int,
+        user_id: int,
+    ) -> SharedResourceConfidentialAccess | None:
+        result = await self.session.execute(
+            select(SharedResourceConfidentialAccess).where(
+                SharedResourceConfidentialAccess.resource_id == resource_id,
+                SharedResourceConfidentialAccess.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_confidential_access(
+        self,
+        resource_id: int,
+        user_id: int,
+    ) -> SharedResourceConfidentialAccess:
+        item = SharedResourceConfidentialAccess(resource_id=resource_id, user_id=user_id)
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def remove_confidential_access(self, item: SharedResourceConfidentialAccess) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def clear_confidential_access(self, resource_id: int) -> None:
+        result = await self.session.execute(
+            select(SharedResourceConfidentialAccess).where(
+                SharedResourceConfidentialAccess.resource_id == resource_id
+            )
+        )
+        items = list(result.scalars().all())
+        for item in items:
+            await self.session.delete(item)
+        await self.session.commit()
+
+
+class AnnouncementRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list(self, statuses: List[str] | None = None) -> List[Announcement]:
+        statement = select(Announcement).order_by(Announcement.created_at.desc())
+        if statuses:
+            statement = statement.where(Announcement.status.in_(statuses))
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, announcement_id: int) -> Announcement | None:
+        result = await self.session.execute(
+            select(Announcement).where(Announcement.id == announcement_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, item: Announcement) -> Announcement:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def save(self, item: Announcement) -> Announcement:
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def delete(self, item: Announcement) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+
+class PollRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list(self, statuses: List[str] | None = None) -> List[Poll]:
+        statement = (
+            select(Poll)
+            .options(
+                selectinload(Poll.choices),
+                selectinload(Poll.votes),
+            )
+            .order_by(Poll.created_at.desc())
+        )
+        if statuses:
+            statement = statement.where(Poll.status.in_(statuses))
+        result = await self.session.execute(statement)
+        return list(result.scalars().unique().all())
+
+    async def get_by_id(self, poll_id: int) -> Poll | None:
+        result = await self.session.execute(
+            select(Poll)
+            .options(
+                selectinload(Poll.choices),
+                selectinload(Poll.votes),
+            )
+            .where(Poll.id == poll_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, item: Poll) -> Poll:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return await self.get_by_id(item.id)  # type: ignore[return-value]
+
+    async def save(self, item: Poll) -> Poll:
+        await self.session.commit()
+        await self.session.refresh(item)
+        return await self.get_by_id(item.id)  # type: ignore[return-value]
+
+    async def delete(self, item: Poll) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def add_choice(self, item: PollChoice) -> PollChoice:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def delete_choice(self, item: PollChoice) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+    async def list_votes_for_user(self, poll_id: int, user_id: int) -> List[PollVote]:
+        result = await self.session.execute(
+            select(PollVote).where(PollVote.poll_id == poll_id, PollVote.user_id == user_id)
+        )
+        return list(result.scalars().all())
+
+    async def add_vote(self, item: PollVote) -> PollVote:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def delete_vote(self, item: PollVote) -> None:
         await self.session.delete(item)
         await self.session.commit()

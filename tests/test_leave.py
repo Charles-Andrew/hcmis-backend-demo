@@ -1,4 +1,5 @@
 import anyio
+import pytest
 from datetime import date
 from typing import Literal, cast
 
@@ -421,3 +422,44 @@ def test_leave_credit_management_and_approver_settings(monkeypatch):
         cast(AsyncSession, object()),
     )
     assert credits[0].remaining_credits == 15
+
+
+def test_paid_leave_request_requires_available_credit(monkeypatch):
+    _reset_fakes()
+    _seed_users_and_department()
+    FakeLeaveCreditRepository.leave_credits[1].credits = 1
+    FakeLeaveCreditRepository.leave_credits[1].used_credits = 1
+
+    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
+    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
+    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    with pytest.raises(leave_service.ConflictError):
+        anyio.run(
+            _create_leave,
+            {"leave_date": date(2026, 4, 6), "leave_type": "PA", "info": "Out of credits"},
+        )
+
+
+def test_paid_leave_final_approval_fails_when_credit_depleted(monkeypatch):
+    _reset_fakes()
+    _seed_users_and_department()
+
+    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
+    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
+    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    leave_request = anyio.run(
+        _create_leave,
+        {"leave_date": date(2026, 4, 8), "leave_type": "PA", "info": "Annual leave"},
+    )
+    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[2], "APPROVE")
+    FakeLeaveCreditRepository.leave_credits[1].credits = 1
+    FakeLeaveCreditRepository.leave_credits[1].used_credits = 1
+
+    with pytest.raises(leave_service.ConflictError):
+        anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[3], "APPROVE")

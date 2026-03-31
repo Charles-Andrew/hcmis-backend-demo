@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.capabilities import is_staff_user
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.time import utc_now
 from app.models.leave import (
@@ -126,6 +127,11 @@ async def get_leave_request(session: AsyncSession, leave_id: int) -> LeaveReques
 async def create_leave_request(
     session: AsyncSession, current_user: User, payload: LeaveRequestCreateRequest
 ) -> LeaveRequest:
+    if payload.leave_type == LeaveType.PAID.value:
+        leave_credit = await _ensure_leave_credit(session, current_user.id)
+        if leave_credit.remaining_credits <= 0:
+            raise ConflictError("Insufficient leave credits for paid leave.")
+
     first_approver_id, second_approver_id = await _get_approval_chain(
         session, current_user
     )
@@ -153,9 +159,7 @@ async def delete_leave_request(
     if leave_request is None:
         raise NotFoundError("Leave request not found.")
 
-    if leave_request.user_id != current_user.id and not (
-        current_user.is_superuser or (current_user.role or "").upper() == "HR"
-    ):
+    if leave_request.user_id != current_user.id and not is_staff_user(current_user):
         raise PermissionDeniedError("You are not allowed to delete this leave request.")
 
     if (
@@ -230,6 +234,8 @@ async def review_leave_request(
         and leave_request.leave_type == LeaveType.PAID.value
     ):
         leave_credit = await _ensure_leave_credit(session, leave_request.user_id)
+        if leave_credit.remaining_credits <= 0:
+            raise ConflictError("Insufficient leave credits for paid leave.")
         leave_credit.used_credits += 1
         await LeaveCreditRepository(session).save(leave_credit)
 

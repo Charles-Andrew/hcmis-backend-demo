@@ -183,6 +183,10 @@ class OvertimeRequestRead(BaseModel):
     info: str | None = None
     date: date
     status: str
+    user_name: str | None = None
+    user_email: str | None = None
+    user_department_name: str | None = None
+    approver_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -198,6 +202,9 @@ class OvertimeRequestCreateRequest(BaseModel):
 
 class OvertimeRequestRespondRequest(BaseModel):
     response: Literal["APPROVE", "REJECT"]
+
+
+OvertimeRequestScope = Literal["mine", "approvals", "all"]
 
 
 class ShiftSwapRequestRead(BaseModel):

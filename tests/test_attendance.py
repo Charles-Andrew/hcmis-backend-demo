@@ -290,6 +290,38 @@ class FakeOvertimeRepository:
             if overtime.approver_id == approver_id
         ]
 
+    async def list(
+        self,
+        *,
+        user_id: int | None = None,
+        approver_id: int | None = None,
+        year: int | None = None,
+        month: int | None = None,
+        status: str | None = None,
+        department_id: int | None = None,
+        query: str | None = None,
+    ):
+        _ = department_id
+        results = list(self.overtime_requests.values())
+        if user_id is not None:
+            results = [item for item in results if item.user_id == user_id]
+        if approver_id is not None:
+            results = [item for item in results if item.approver_id == approver_id]
+        if year is not None:
+            results = [item for item in results if item.date.year == year]
+        if month is not None:
+            results = [item for item in results if item.date.month == month]
+        if status is not None:
+            results = [item for item in results if item.status == status]
+        if query:
+            lowered = query.lower()
+            results = [
+                item
+                for item in results
+                if lowered in (item.info or "").lower()
+            ]
+        return results
+
     async def get_by_id(self, overtime_id: int):
         return self.overtime_requests.get(overtime_id)
 

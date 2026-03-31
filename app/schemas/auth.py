@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 
-from app.schemas.user import UserRead
+from app.schemas.user import UserWithCapabilitiesRead
 
 
 class AuthRegisterRequest(BaseModel):
@@ -22,5 +22,4 @@ class AuthLoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    user: UserRead
-
+    user: UserWithCapabilitiesRead

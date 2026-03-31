@@ -9,7 +9,7 @@ DATABASE_URL ?= postgresql+asyncpg://hcmis:hcmis@localhost:$(POSTGRES_HOST_PORT)
 REDIS_URL ?= redis://localhost:$(REDIS_HOST_PORT)/0
 FASTAPI_APP ?= app/main.py
 
-.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev
+.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev db-clear seed-initial reset-and-seed
 
 ruff:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff check
@@ -40,3 +40,11 @@ migrate:
 
 dev: docker-config up wait-postgres wait-redis migrate
 	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run fastapi dev $(FASTAPI_APP) --host 0.0.0.0 --port 8000
+
+db-clear:
+	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.clear_db_data
+
+seed-initial:
+	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.seed_initial_data
+
+reset-and-seed: db-clear seed-initial

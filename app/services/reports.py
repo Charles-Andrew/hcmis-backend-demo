@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.capabilities import is_staff_user
 from app.core.exceptions import NotFoundError
 from app.models.leave import LeaveType
 from app.models.performance import Evaluation
@@ -151,7 +152,7 @@ def _evaluation_score(evaluation: Evaluation) -> float:
 
 
 async def list_report_catalog(current_user: User) -> list[dict]:
-    is_hr = current_user.is_superuser or current_user.role == "HR"
+    is_hr = is_staff_user(current_user)
     modules = []
     for module in REPORT_CATALOG:
         if module["code"] == "USERS" and not is_hr:
@@ -215,7 +216,7 @@ async def get_employee_performance_summary(
     session: AsyncSession, selected_year: int, selected_user: int, current_user: User
 ) -> dict:
     report_repo = ReportsRepository(session)
-    if not (current_user.is_superuser or current_user.role == "HR") and current_user.id != selected_user:
+    if not is_staff_user(current_user) and current_user.id != selected_user:
         selected_user = current_user.id
     evaluations = await report_repo.list_user_evaluations(
         user_id=selected_user, year=selected_year, finalized=True
@@ -273,7 +274,7 @@ async def get_employee_yearly_salary_summary_report(
     session: AsyncSession, selected_year: int, selected_user: int, current_user: User
 ) -> dict:
     report_repo = ReportsRepository(session)
-    if not (current_user.is_superuser or current_user.role == "HR") and current_user.id != selected_user:
+    if not is_staff_user(current_user) and current_user.id != selected_user:
         selected_user = current_user.id
     payslips = await report_repo.list_payslips(
         user_id=selected_user, year=selected_year, released=True
@@ -305,7 +306,7 @@ async def get_employee_leave_summary_report(
     current_user: User,
 ) -> dict:
     report_repo = ReportsRepository(session)
-    if not (current_user.is_superuser or current_user.role == "HR") and current_user.id != selected_user:
+    if not is_staff_user(current_user) and current_user.id != selected_user:
         selected_user = current_user.id
     from_date_value = _as_date(from_date)
     to_date_value = _as_date(to_date)

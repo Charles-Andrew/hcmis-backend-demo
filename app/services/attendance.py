@@ -48,6 +48,7 @@ from app.schemas.attendance import (
     HolidayRead,
     HolidayUpdateRequest,
     OvertimeRequestCreateRequest,
+    OvertimeRequestScope,
     OvertimeRequestRespondRequest,
     ShiftTemplateCreateRequest,
     ShiftSwapRequestCreateRequest,
@@ -492,14 +493,57 @@ async def delete_holiday(session: AsyncSession, holiday_id: int) -> str:
 
 
 async def list_overtime_requests(
-    session: AsyncSession, user_id: int | None = None, approver_id: int | None = None
+    session: AsyncSession,
+    *,
+    current_user_id: int,
+    current_user_is_staff: bool,
+    scope: OvertimeRequestScope | None = None,
+    user_id: int | None = None,
+    approver_id: int | None = None,
+    year: int | None = None,
+    month: int | None = None,
+    status: str | None = None,
+    department_id: int | None = None,
+    query: str | None = None,
 ) -> list[OvertimeRequest]:
-    repository = OvertimeRepository(session)
-    if user_id is not None:
-        return await repository.list_for_user(user_id)
-    if approver_id is not None:
-        return await repository.list_for_approver(approver_id)
-    return []
+    scope_label: OvertimeRequestScope
+    if scope is not None:
+        scope_label = scope
+    elif user_id is not None:
+        scope_label = "mine"
+    elif approver_id is not None:
+        scope_label = "approvals"
+    elif current_user_is_staff:
+        scope_label = "all"
+    else:
+        scope_label = "mine"
+
+    selected_user_id = user_id
+    selected_approver_id = approver_id
+
+    if scope_label == "all":
+        if not current_user_is_staff:
+            raise PermissionDeniedError("You do not have permission to view all overtime requests.")
+    elif scope_label == "approvals":
+        if selected_approver_id is None:
+            selected_approver_id = current_user_id
+        elif selected_approver_id != current_user_id and not current_user_is_staff:
+            raise PermissionDeniedError("You do not have permission to view this approver's requests.")
+    else:
+        if selected_user_id is None:
+            selected_user_id = current_user_id
+        elif selected_user_id != current_user_id and not current_user_is_staff:
+            raise PermissionDeniedError("You do not have permission to view this user's requests.")
+
+    return await OvertimeRepository(session).list(
+        user_id=selected_user_id if scope_label != "approvals" else None,
+        approver_id=selected_approver_id if scope_label != "mine" else None,
+        year=year,
+        month=month,
+        status=status,
+        department_id=department_id,
+        query=query,
+    )
 
 
 async def create_overtime_request(
@@ -530,6 +574,8 @@ async def respond_to_overtime_request(
         raise NotFoundError("Overtime request not found.")
     if overtime.approver_id != approver_id:
         raise PermissionDeniedError("You do not have permission to respond to this request.")
+    if overtime.status != OvertimeRequest.Status.PENDING.value:
+        raise ConflictError("This overtime request has already been decided.")
     overtime.status = (
         OvertimeRequest.Status.APPROVED.value
         if payload.response == "APPROVE"

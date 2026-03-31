@@ -35,6 +35,14 @@ class Settings(BaseSettings):
         default="development",
         validation_alias="ENVIRONMENT",
     )
+    shared_resources_storage_dir: str = Field(
+        default="./storage/shared-resources",
+        validation_alias="SHARED_RESOURCES_STORAGE_DIR",
+    )
+    shared_resources_max_file_size_mb: int = Field(
+        default=50,
+        validation_alias="SHARED_RESOURCES_MAX_FILE_SIZE_MB",
+    )
 
 
 @lru_cache

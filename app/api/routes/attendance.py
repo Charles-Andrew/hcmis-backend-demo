@@ -6,6 +6,8 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
+from app.core.capabilities import is_staff_user
+from app.core.exceptions import PermissionDeniedError
 from app.models.attendance import (
     AttendanceRecord,
     DepartmentRosterDay,
@@ -38,6 +40,7 @@ from app.schemas.attendance import (
     HolidayUpdateRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRead,
+    OvertimeRequestScope,
     OvertimeRequestRespondRequest,
     ShiftTemplateCreateRequest,
     ShiftTemplateRead,
@@ -321,12 +324,31 @@ async def remove_holiday(
 
 @router.get("/overtime", response_model=list[OvertimeRequestRead])
 async def get_overtime_requests(
+    scope: OvertimeRequestScope | None = Query(default=None),
     user_id: int | None = Query(default=None),
     approver_id: int | None = Query(default=None),
+    year: int | None = Query(default=None, ge=1900),
+    month: int | None = Query(default=None, ge=1, le=12),
+    status: str | None = Query(default=None, pattern="^(PEND|APP|REJ)$"),
+    department_id: int | None = Query(default=None),
+    q: str | None = Query(default=None, alias="q"),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> list[OvertimeRequest]:
-    return await list_overtime_requests(session, user_id=user_id, approver_id=approver_id)
+    is_staff = is_staff_user(current_user)
+    return await list_overtime_requests(
+        session,
+        current_user_id=current_user.id,
+        current_user_is_staff=is_staff,
+        scope=scope,
+        user_id=user_id,
+        approver_id=approver_id,
+        year=year,
+        month=month,
+        status=status,
+        department_id=department_id,
+        query=q,
+    )
 
 
 @router.post("/overtime", response_model=OvertimeRequestRead, status_code=status.HTTP_201_CREATED)
@@ -335,6 +357,9 @@ async def post_overtime_request(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> OvertimeRequest:
+    is_staff = is_staff_user(current_user)
+    if payload.user_id != current_user.id and not is_staff:
+        raise PermissionDeniedError("You do not have permission to create this overtime request.")
     return await create_overtime_request(session, payload)
 
 

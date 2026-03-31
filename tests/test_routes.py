@@ -30,6 +30,22 @@ def test_core_routes_are_registered():
     assert "/payroll/thirteenth-month-pays" in paths
     assert "/performance/questionnaires" in paths
     assert "/performance/user-evaluations" in paths
+    assert "/performance/feed" in paths
+    assert "/performance/announcements" in paths
+    assert "/performance/announcements/{announcement_id}/publish" in paths
+    assert "/performance/announcements/{announcement_id}/archive" in paths
+    assert "/performance/polls" in paths
+    assert "/performance/polls/{poll_id}/publish" in paths
+    assert "/performance/polls/{poll_id}/close" in paths
+    assert "/performance/polls/{poll_id}/archive" in paths
+    assert "/performance/polls/{poll_id}/votes" in paths
+    assert "/performance/polls/{poll_id}/results" in paths
+    assert "/performance/shared-resources" in paths
+    assert "/performance/shared-resources/{resource_id}" in paths
+    assert "/performance/shared-resources/upload" in paths
+    assert "/performance/shared-resources/{resource_id}/download" in paths
+    assert "/performance/shared-resources/{resource_id}/shares" in paths
+    assert "/performance/shared-resources/{resource_id}/confidential-access" in paths
     assert "/chat/users" in paths
     assert "/chat/conversations/{other_user_id}" in paths
     assert "/chat/messages" in paths

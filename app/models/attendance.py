@@ -204,6 +204,31 @@ class OvertimeRequest(Base):
         "User", foreign_keys=[approver_id], back_populates="overtime_approvals"
     )
 
+    @staticmethod
+    def _display_name(user) -> str | None:
+        if user is None:
+            return None
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        return full_name or user.email
+
+    @property
+    def user_name(self) -> str | None:
+        return self._display_name(self.user)
+
+    @property
+    def user_email(self) -> str | None:
+        return self.user.email if self.user is not None else None
+
+    @property
+    def user_department_name(self) -> str | None:
+        if self.user is None or self.user.department is None:
+            return None
+        return self.user.department.name
+
+    @property
+    def approver_name(self) -> str | None:
+        return self._display_name(self.approver)
+
 
 class ShiftSwapRequest(Base):
     __tablename__ = "shift_swap_requests"
