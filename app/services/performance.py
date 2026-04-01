@@ -936,6 +936,38 @@ async def archive_announcement(
     return await repository.save(item)
 
 
+async def unarchive_announcement(
+    session: AsyncSession,
+    announcement_id: int,
+) -> Announcement:
+    repository = AnnouncementRepository(session)
+    item = await repository.get_by_id(announcement_id)
+    if item is None:
+        raise NotFoundError("Announcement not found.")
+    if item.status != "archived":
+        raise ConflictError("Only archived announcements can be unarchived.")
+    item.status = "published" if item.published_at is not None else "draft"
+    item.archived_at = None
+    return await repository.save(item)
+
+
+async def revert_announcement_to_draft(
+    session: AsyncSession,
+    announcement_id: int,
+) -> Announcement:
+    repository = AnnouncementRepository(session)
+    item = await repository.get_by_id(announcement_id)
+    if item is None:
+        raise NotFoundError("Announcement not found.")
+    if item.status == "archived":
+        raise ConflictError("Archived announcements cannot be moved to draft.")
+    if item.status != "published":
+        raise ConflictError("Only published announcements can be moved to draft.")
+    item.status = "draft"
+    item.published_at = None
+    return await repository.save(item)
+
+
 async def list_polls(
     session: AsyncSession,
     current_user_id: int,
@@ -1054,6 +1086,27 @@ async def archive_poll(
     return _to_poll_read(saved)
 
 
+async def unarchive_poll(
+    session: AsyncSession,
+    poll_id: int,
+) -> PollRead:
+    repository = PollRepository(session)
+    poll = await repository.get_by_id(poll_id)
+    if poll is None:
+        raise NotFoundError("Poll not found.")
+    if poll.status != "archived":
+        raise ConflictError("Only archived polls can be unarchived.")
+    if poll.closed_at is not None:
+        poll.status = "closed"
+    elif poll.published_at is not None:
+        poll.status = "published"
+    else:
+        poll.status = "draft"
+    poll.archived_at = None
+    saved = await repository.save(poll)
+    return _to_poll_read(saved)
+
+
 async def add_poll_choice(
     session: AsyncSession,
     poll_id: int,
@@ -1166,6 +1219,8 @@ async def list_feed(
     session: AsyncSession,
     current_user_id: int,
     item_type: str | None = None,
+    include_drafts: bool = False,
+    include_archived: bool = False,
 ) -> list[FeedItemRead]:
     normalized_item_type = item_type.strip().lower() if item_type else None
     if normalized_item_type not in {None, "announcement", "poll"}:
@@ -1173,11 +1228,23 @@ async def list_feed(
 
     feed_items: list[tuple[str, object, object]] = []
     if normalized_item_type in {None, "announcement"}:
-        announcements = await list_announcements(session, statuses=["published"])
+        if include_archived:
+            announcement_statuses = ["archived"]
+        else:
+            announcement_statuses = ["published", "draft"] if include_drafts else ["published"]
+        announcements = await list_announcements(session, statuses=announcement_statuses)
         for item in announcements:
             feed_items.append(("announcement", item, item.created_at))
     if normalized_item_type in {None, "poll"}:
-        polls = await PollRepository(session).list(statuses=["published", "closed"])
+        if include_archived:
+            poll_statuses = ["archived"]
+        else:
+            poll_statuses = (
+                ["published", "closed", "draft"]
+                if include_drafts
+                else ["published", "closed"]
+            )
+        polls = await PollRepository(session).list(statuses=poll_statuses)
         for item in polls:
             feed_items.append(("poll", item, item.created_at))
 

@@ -39,6 +39,7 @@ from app.services.performance import (
     add_shared_resource_user_access,
     archive_announcement,
     archive_poll,
+    revert_announcement_to_draft,
     close_poll,
     create_announcement,
     create_evaluation,
@@ -74,6 +75,8 @@ from app.services.performance import (
     submit_poll_vote,
     submit_evaluation,
     toggle_user_evaluation_finalized,
+    unarchive_announcement,
+    unarchive_poll,
     update_announcement,
     update_poll,
     update_shared_resource,
@@ -88,13 +91,17 @@ router = APIRouter(prefix="/performance", tags=["performance"])
 @router.get("/feed", response_model=list[FeedItemRead])
 async def read_feed(
     item_type: str | None = None,
+    include_archived: bool = False,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> list[FeedItemRead]:
+    is_staff = is_staff_user(current_user)
     return await list_feed(
         session=session,
         current_user_id=current_user.id,
         item_type=item_type,
+        include_drafts=is_staff,
+        include_archived=include_archived and is_staff,
     )
 
 
@@ -150,6 +157,26 @@ async def archive_announcement_route(
     current_user: User = Depends(require_staff_user),
 ) -> AnnouncementRead:
     item = await archive_announcement(session, announcement_id)
+    return AnnouncementRead.model_validate(item)
+
+
+@router.post("/announcements/{announcement_id}/unarchive", response_model=AnnouncementRead)
+async def unarchive_announcement_route(
+    announcement_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> AnnouncementRead:
+    item = await unarchive_announcement(session, announcement_id)
+    return AnnouncementRead.model_validate(item)
+
+
+@router.post("/announcements/{announcement_id}/draft", response_model=AnnouncementRead)
+async def move_announcement_to_draft_route(
+    announcement_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> AnnouncementRead:
+    item = await revert_announcement_to_draft(session, announcement_id)
     return AnnouncementRead.model_validate(item)
 
 
@@ -218,6 +245,15 @@ async def archive_poll_route(
     current_user: User = Depends(require_staff_user),
 ) -> PollRead:
     return await archive_poll(session, poll_id)
+
+
+@router.post("/polls/{poll_id}/unarchive", response_model=PollRead)
+async def unarchive_poll_route(
+    poll_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PollRead:
+    return await unarchive_poll(session, poll_id)
 
 
 @router.post("/polls/{poll_id}/choices", response_model=PollRead)

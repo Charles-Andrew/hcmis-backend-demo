@@ -33,11 +33,14 @@ def test_core_routes_are_registered():
     assert "/performance/feed" in paths
     assert "/performance/announcements" in paths
     assert "/performance/announcements/{announcement_id}/publish" in paths
+    assert "/performance/announcements/{announcement_id}/draft" in paths
     assert "/performance/announcements/{announcement_id}/archive" in paths
+    assert "/performance/announcements/{announcement_id}/unarchive" in paths
     assert "/performance/polls" in paths
     assert "/performance/polls/{poll_id}/publish" in paths
     assert "/performance/polls/{poll_id}/close" in paths
     assert "/performance/polls/{poll_id}/archive" in paths
+    assert "/performance/polls/{poll_id}/unarchive" in paths
     assert "/performance/polls/{poll_id}/votes" in paths
     assert "/performance/polls/{poll_id}/results" in paths
     assert "/performance/shared-resources" in paths

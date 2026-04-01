@@ -669,6 +669,171 @@ def test_announcement_lifecycle_and_feed(monkeypatch):
     assert feed[0].announcement.title == "System maintenance"
 
 
+def test_feed_includes_drafts_when_requested(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "AnnouncementRepository", FakeAnnouncementRepository)
+    monkeypatch.setattr(performance_service, "PollRepository", FakePollRepository)
+
+    announcement = anyio.run(
+        performance_service.create_announcement,
+        cast(AsyncSession, object()),
+        1,
+        AnnouncementCreateRequest(
+            title="Draft announcement",
+            summary="internal",
+            content="Draft-only message.",
+        ),
+    )
+    assert announcement.status == "draft"
+
+    poll = anyio.run(
+        performance_service.create_poll,
+        cast(AsyncSession, object()),
+        1,
+        PollCreateRequest(
+            question="Draft poll?",
+            choices=[
+                PollChoiceCreateRequest(text="Yes"),
+                PollChoiceCreateRequest(text="No"),
+            ],
+        ),
+    )
+    assert poll.status == "draft"
+
+    staff_feed = anyio.run(
+        performance_service.list_feed,
+        cast(AsyncSession, object()),
+        1,
+        None,
+        True,
+    )
+    assert len(staff_feed) == 2
+    assert {item.item_type for item in staff_feed} == {"announcement", "poll"}
+
+    non_staff_feed = anyio.run(
+        performance_service.list_feed,
+        cast(AsyncSession, object()),
+        2,
+        None,
+        False,
+    )
+    assert non_staff_feed == []
+
+    archived_feed = anyio.run(
+        performance_service.list_feed,
+        cast(AsyncSession, object()),
+        1,
+        None,
+        True,
+        True,
+    )
+    assert archived_feed == []
+
+
+def test_unarchive_and_move_to_draft_workflow(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "AnnouncementRepository", FakeAnnouncementRepository)
+    monkeypatch.setattr(performance_service, "PollRepository", FakePollRepository)
+
+    announcement = anyio.run(
+        performance_service.create_announcement,
+        cast(AsyncSession, object()),
+        1,
+        AnnouncementCreateRequest(
+            title="Release notes",
+            summary="v1.2",
+            content="New release details.",
+        ),
+    )
+    published_announcement = anyio.run(
+        performance_service.publish_announcement,
+        cast(AsyncSession, object()),
+        announcement.id,
+    )
+    assert published_announcement.status == "published"
+
+    archived_announcement = anyio.run(
+        performance_service.archive_announcement,
+        cast(AsyncSession, object()),
+        announcement.id,
+    )
+    assert archived_announcement.status == "archived"
+
+    restored_announcement = anyio.run(
+        performance_service.unarchive_announcement,
+        cast(AsyncSession, object()),
+        announcement.id,
+    )
+    assert restored_announcement.status == "published"
+
+    draft_announcement = anyio.run(
+        performance_service.revert_announcement_to_draft,
+        cast(AsyncSession, object()),
+        announcement.id,
+    )
+    assert draft_announcement.status == "draft"
+    assert draft_announcement.published_at is None
+    re_archived_announcement = anyio.run(
+        performance_service.archive_announcement,
+        cast(AsyncSession, object()),
+        announcement.id,
+    )
+    assert re_archived_announcement.status == "archived"
+
+    poll = anyio.run(
+        performance_service.create_poll,
+        cast(AsyncSession, object()),
+        1,
+        PollCreateRequest(
+            question="Deploy now?",
+            choices=[
+                PollChoiceCreateRequest(text="Go"),
+                PollChoiceCreateRequest(text="Wait"),
+            ],
+        ),
+    )
+    published_poll = anyio.run(
+        performance_service.publish_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert published_poll.status == "published"
+
+    closed_poll = anyio.run(
+        performance_service.close_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert closed_poll.status == "closed"
+
+    archived_poll = anyio.run(
+        performance_service.archive_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert archived_poll.status == "archived"
+
+    archived_feed = anyio.run(
+        performance_service.list_feed,
+        cast(AsyncSession, object()),
+        1,
+        None,
+        True,
+        True,
+    )
+    assert len(archived_feed) == 2
+    assert {item.item_type for item in archived_feed} == {"announcement", "poll"}
+
+    restored_poll = anyio.run(
+        performance_service.unarchive_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert restored_poll.status == "closed"
+
+
 def test_poll_single_choice_vote_replaces_previous(monkeypatch):
     _reset()
     _seed()
