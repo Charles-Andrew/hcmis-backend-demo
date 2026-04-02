@@ -558,6 +558,7 @@ async def create_overtime_request(
         approver_id=payload.approver_id,
         info=payload.info,
         date=payload.date,
+        status=OvertimeRequest.Status.PENDING.value,
     )
     return await OvertimeRepository(session).create(overtime)
 
@@ -622,6 +623,7 @@ async def create_shift_swap_request(
         requested_schedule_id=payload.requested_schedule_id,
         approver_id=payload.approver_id,
         info=payload.info,
+        status=ShiftSwapRequest.Status.PENDING.value,
     )
     return await ShiftSwapRepository(session).create(swap)
 
