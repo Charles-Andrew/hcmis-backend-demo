@@ -1,4 +1,5 @@
 import anyio
+import pytest
 from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,7 @@ from app.schemas.performance import (
     SharedResourceCreateRequest,
     SharedResourceUpdateRequest,
     UserEvaluationCreateRequest,
+    UserEvaluationUpdateRequest,
 )
 from app.services import performance as performance_service
 
@@ -69,11 +71,11 @@ class FakeQuestionnaireRepository:
         return None
 
     async def create(self, questionnaire: Questionnaire):
-        questionnaire.id = self.next_id
-        self.next_id += 1
+        questionnaire.id = FakeQuestionnaireRepository.next_id
+        FakeQuestionnaireRepository.next_id += 1
         questionnaire.created_at = questionnaire.created_at or utc_now()
         questionnaire.updated_at = questionnaire.updated_at or utc_now()
-        self.items[questionnaire.id] = questionnaire
+        FakeQuestionnaireRepository.items[questionnaire.id] = questionnaire
         return questionnaire
 
     async def save(self, questionnaire: Questionnaire):
@@ -622,6 +624,145 @@ def test_evaluation_summary_and_reset(monkeypatch):
     assert reset.date_submitted is None
     assert reset.positive_feedback is None
 
+
+def test_user_evaluation_enforces_employee_vs_administrator_questionnaire(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "QuestionnaireRepository", FakeQuestionnaireRepository)
+    monkeypatch.setattr(performance_service, "UserEvaluationRepository", FakeUserEvaluationRepository)
+    monkeypatch.setattr(performance_service, "EvaluationRepository", FakeEvaluationRepository)
+    monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
+
+    employee_user = FakeUserRepository.users[1]
+    employee_user.role = "EMP"
+    non_employee_user = FakeUserRepository.users[2]
+    non_employee_user.role = "HR"
+
+    employee_questionnaire = anyio.run(
+        performance_service.create_questionnaire,
+        cast(AsyncSession, object()),
+        QuestionnaireCreateRequest(
+            code="NIMER-EES",
+            title="Employee Tool",
+            content={"questionnaire_content": [{"domain_number": "1", "questions": []}]},
+        ),
+    )
+    admin_questionnaire = anyio.run(
+        performance_service.create_questionnaire,
+        cast(AsyncSession, object()),
+        QuestionnaireCreateRequest(
+            code="NIMER-NAPES",
+            title="Admin Tool",
+            content={"questionnaire_content": [{"domain_number": "1", "questions": []}]},
+        ),
+    )
+
+    employee_cycle = anyio.run(
+        performance_service.create_user_evaluation,
+        cast(AsyncSession, object()),
+        UserEvaluationCreateRequest(
+            evaluatee_id=employee_user.id,
+            questionnaire_id=employee_questionnaire.id,
+            quarter="FQ",
+            year=2026,
+        ),
+    )
+    assert employee_cycle.questionnaire_id == employee_questionnaire.id
+
+    non_employee_cycle = anyio.run(
+        performance_service.create_user_evaluation,
+        cast(AsyncSession, object()),
+        UserEvaluationCreateRequest(
+            evaluatee_id=non_employee_user.id,
+            questionnaire_id=admin_questionnaire.id,
+            quarter="FQ",
+            year=2026,
+        ),
+    )
+    assert non_employee_cycle.questionnaire_id == admin_questionnaire.id
+
+    with pytest.raises(
+        ConflictError,
+        match="Employees must use the employee questionnaire",
+    ):
+        anyio.run(
+            performance_service.create_user_evaluation,
+            cast(AsyncSession, object()),
+            UserEvaluationCreateRequest(
+                evaluatee_id=employee_user.id,
+                questionnaire_id=admin_questionnaire.id,
+                quarter="SQ",
+                year=2026,
+            ),
+        )
+
+    with pytest.raises(
+        ConflictError,
+        match="Non-employees must use the administrator questionnaire",
+    ):
+        anyio.run(
+            performance_service.create_user_evaluation,
+            cast(AsyncSession, object()),
+            UserEvaluationCreateRequest(
+                evaluatee_id=non_employee_user.id,
+                questionnaire_id=employee_questionnaire.id,
+                quarter="SQ",
+                year=2026,
+            ),
+        )
+
+
+def test_update_user_evaluation_enforces_questionnaire_role_match(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "QuestionnaireRepository", FakeQuestionnaireRepository)
+    monkeypatch.setattr(performance_service, "UserEvaluationRepository", FakeUserEvaluationRepository)
+    monkeypatch.setattr(performance_service, "EvaluationRepository", FakeEvaluationRepository)
+    monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
+
+    employee_user = FakeUserRepository.users[1]
+    employee_user.role = "EMP"
+
+    employee_questionnaire = anyio.run(
+        performance_service.create_questionnaire,
+        cast(AsyncSession, object()),
+        QuestionnaireCreateRequest(
+            code="NIMER-EES",
+            title="Employee Tool",
+            content={"questionnaire_content": [{"domain_number": "1", "questions": []}]},
+        ),
+    )
+    admin_questionnaire = anyio.run(
+        performance_service.create_questionnaire,
+        cast(AsyncSession, object()),
+        QuestionnaireCreateRequest(
+            code="NIMER-NAPES",
+            title="Admin Tool",
+            content={"questionnaire_content": [{"domain_number": "1", "questions": []}]},
+        ),
+    )
+
+    employee_cycle = anyio.run(
+        performance_service.create_user_evaluation,
+        cast(AsyncSession, object()),
+        UserEvaluationCreateRequest(
+            evaluatee_id=employee_user.id,
+            questionnaire_id=employee_questionnaire.id,
+            quarter="FQ",
+            year=2026,
+        ),
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="Employees must use the employee questionnaire",
+    ):
+        anyio.run(
+            performance_service.update_user_evaluation,
+            cast(AsyncSession, object()),
+            employee_cycle.id,
+            UserEvaluationUpdateRequest(questionnaire_id=admin_questionnaire.id),
+        )
 
 def test_announcement_lifecycle_and_feed(monkeypatch):
     _reset()

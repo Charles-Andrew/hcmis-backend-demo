@@ -199,6 +199,31 @@ def _evaluation_summary(
 
 ANNOUNCEMENT_STATUSES = {"draft", "published", "archived"}
 POLL_STATUSES = {"draft", "published", "closed", "archived"}
+EMPLOYEE_QUESTIONNAIRE_CODE = "NIMER-EES"
+ADMINISTRATOR_QUESTIONNAIRE_CODE = "NIMER-NAPES"
+
+
+def _is_employee_user_role(role: str | None) -> bool:
+    normalized = (role or "EMP").strip().upper()
+    return normalized in {"", "EMP"}
+
+
+def _assert_questionnaire_matches_evaluatee_role(*, evaluatee_role: str | None, questionnaire_code: str) -> None:
+    code = questionnaire_code.strip().upper()
+    if code not in {EMPLOYEE_QUESTIONNAIRE_CODE, ADMINISTRATOR_QUESTIONNAIRE_CODE}:
+        return
+
+    is_employee = _is_employee_user_role(evaluatee_role)
+    if is_employee and code != EMPLOYEE_QUESTIONNAIRE_CODE:
+        raise ConflictError(
+            "Employees must use the employee questionnaire "
+            f"({EMPLOYEE_QUESTIONNAIRE_CODE})."
+        )
+    if not is_employee and code != ADMINISTRATOR_QUESTIONNAIRE_CODE:
+        raise ConflictError(
+            "Non-employees must use the administrator questionnaire "
+            f"({ADMINISTRATOR_QUESTIONNAIRE_CODE})."
+        )
 
 
 def _normalize_statuses(
@@ -398,6 +423,10 @@ async def create_user_evaluation(
     questionnaire = await questionnaire_repository.get_by_id(payload.questionnaire_id)
     if questionnaire is None:
         raise NotFoundError("Questionnaire not found.")
+    _assert_questionnaire_matches_evaluatee_role(
+        evaluatee_role=user.role,
+        questionnaire_code=questionnaire.code,
+    )
 
     repository = UserEvaluationRepository(session)
     existing = await repository.get_by_identity(
@@ -444,6 +473,10 @@ async def update_user_evaluation(
         questionnaire = await QuestionnaireRepository(session).get_by_id(payload.questionnaire_id)
         if questionnaire is None:
             raise NotFoundError("Questionnaire not found.")
+        _assert_questionnaire_matches_evaluatee_role(
+            evaluatee_role=item.evaluatee.role if item.evaluatee else None,
+            questionnaire_code=questionnaire.code,
+        )
         item.questionnaire_id = payload.questionnaire_id
     if payload.quarter is not None:
         item.quarter = payload.quarter

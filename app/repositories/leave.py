@@ -52,12 +52,14 @@ class LeaveApproverRepository:
         self.session.add(leave_approver)
         await self.session.commit()
         await self.session.refresh(leave_approver)
-        return leave_approver
+        hydrated = await self.get_by_department_id(leave_approver.department_id)
+        return hydrated or leave_approver
 
     async def save(self, leave_approver: LeaveApprover) -> LeaveApprover:
         await self.session.commit()
         await self.session.refresh(leave_approver)
-        return leave_approver
+        hydrated = await self.get_by_department_id(leave_approver.department_id)
+        return hydrated or leave_approver
 
     async def delete(self, leave_approver: LeaveApprover) -> None:
         await self.session.delete(leave_approver)

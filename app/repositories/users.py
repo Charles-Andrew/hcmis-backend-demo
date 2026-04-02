@@ -78,9 +78,9 @@ class UserRepository:
                 | func.lower(User.employee_number).like(lowered)
             )
         statement = statement.order_by(
-            func.coalesce(Department.name, ""),
-            User.first_name.asc(),
-            User.last_name.asc(),
+            func.lower(func.coalesce(User.last_name, "")),
+            func.lower(func.coalesce(User.first_name, "")),
+            User.id.asc(),
         )
         result = await self.session.execute(statement)
         return list(result.scalars().all())
@@ -88,10 +88,14 @@ class UserRepository:
     async def create(self, user: User) -> User:
         self.session.add(user)
         await self.session.commit()
-        await self.session.refresh(user)
-        return user
+        refreshed = await self.get_by_id(user.id)
+        if refreshed is None:
+            return user
+        return refreshed
 
     async def save(self, user: User) -> User:
         await self.session.commit()
-        await self.session.refresh(user)
-        return user
+        refreshed = await self.get_by_id(user.id)
+        if refreshed is None:
+            return user
+        return refreshed

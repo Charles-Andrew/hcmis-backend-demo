@@ -19,6 +19,7 @@ From `hcmis-backend/`:
 ```bash
 make db-clear
 make seed-initial
+make seed-performance-questionnaires
 ```
 
 Or run both in one shot:

@@ -1,0 +1,116 @@
+{
+  "code": "NIMER-NAPES",
+  "title": "NIMER Administrator Performance Evaluation System (NAPES)",
+  "description": "Administrator performance evaluation questionnaire based on NAPES form.",
+  "source_file": "docs/NIMER-ADMINISTRATOR-PERFORMANCE-EVALUATION-SYSTEM-NAPES-MSMC.pdf",
+  "respondent_fields": [
+    "name",
+    "unit_department",
+    "designation",
+    "date"
+  ],
+  "privacy_reminder": "The data gathered will be handled in accordance with RA 10173 or the Data Privacy Act of 2012, and will be utilised only for the intended purpose.",
+  "rating_scale": [
+    {
+      "value": 5,
+      "label": "OUTSTANDING",
+      "definition": "Exceptional Performance.",
+      "mean_equivalent": "4.21-5.00"
+    },
+    {
+      "value": 4,
+      "label": "VERY SATISFACTORY",
+      "definition": "Exceeds Standards.",
+      "mean_equivalent": "3.41-4.20"
+    },
+    {
+      "value": 3,
+      "label": "SATISFACTORY",
+      "definition": "Meets Standards.",
+      "mean_equivalent": "2.61-3.40"
+    },
+    {
+      "value": 2,
+      "label": "BELOW SATISFACTORY",
+      "definition": "Below Standards.",
+      "mean_equivalent": "1.81-2.60"
+    },
+    {
+      "value": 1,
+      "label": "UNSATISFACTORY",
+      "definition": "Fails to Meet Standards.",
+      "mean_equivalent": "1.00-1.80"
+    }
+  ],
+  "questionnaire_content": [
+    {
+      "domain_number": "1",
+      "domain_name": "Personal Effectiveness",
+      "questions": [
+        { "indicator_number": "1", "indicator": "Displays an aura of self-confidence through physical appearance, speech, and bearing" },
+        { "indicator_number": "2", "indicator": "Demonstrates a contagious and encouraging positive attitude" },
+        { "indicator_number": "3", "indicator": "Believes that there is much to achieve and the future is bright" },
+        { "indicator_number": "4", "indicator": "Knows how to handle stressful and volatile situations" },
+        { "indicator_number": "5", "indicator": "Has the ability to solve complicated problems" },
+        { "indicator_number": "6", "indicator": "Completes predetermined objectives on time" },
+        { "indicator_number": "7", "indicator": "Thinks outside the box" },
+        { "indicator_number": "8", "indicator": "Willing to take risks and try new approaches" },
+        { "indicator_number": "9", "indicator": "Exemplifies the value of self-improvement" }
+      ]
+    },
+    {
+      "domain_number": "2",
+      "domain_name": "Interpersonal Relationship Effectiveness",
+      "questions": [
+        { "indicator_number": "10", "indicator": "Has the ability to express ideas clearly" },
+        { "indicator_number": "11", "indicator": "Gives full attention to others when they talk" },
+        { "indicator_number": "12", "indicator": "Communicates relevant information and refrains from communicating unnecessary information or oversharing" },
+        { "indicator_number": "13", "indicator": "Understands and optimises non-verbal communications" },
+        { "indicator_number": "14", "indicator": "Able to evoke trust from people he/she interacts with" },
+        { "indicator_number": "15", "indicator": "Able to read situations and understand people's emotions" },
+        { "indicator_number": "16", "indicator": "Willing to open about his/her feelings and be vulnerable" }
+      ]
+    },
+    {
+      "domain_number": "3",
+      "domain_name": "Managerial Effectiveness",
+      "questions": [
+        { "indicator_number": "17", "indicator": "Leads the team in creating a game plan using appropriate planning tools and techniques" },
+        { "indicator_number": "18", "indicator": "Knows how to read changing situations and willing to adjust plans" },
+        { "indicator_number": "19", "indicator": "Makes planning a top priority activity, performed on a regular basis" },
+        { "indicator_number": "20", "indicator": "Delegates authority effectively by clarifying expectations and empowering employees to succeed" },
+        { "indicator_number": "21", "indicator": "Clearly communicates performance standards" },
+        { "indicator_number": "22", "indicator": "Emphasises work quality and performance but avoids micromanaging" },
+        { "indicator_number": "23", "indicator": "Conducts evaluation and offer useful feedbacks regularly" }
+      ]
+    },
+    {
+      "domain_number": "4",
+      "domain_name": "Operational Effectiveness",
+      "questions": [
+        { "indicator_number": "24", "indicator": "Exemplifies the value of leading with humility and consistency" },
+        { "indicator_number": "25", "indicator": "Emphasises the importance of data analysis in problem solving and decision making" },
+        { "indicator_number": "26", "indicator": "Breaks down silos (tribalism) and thinks of the organisation holistically" },
+        { "indicator_number": "27", "indicator": "Committed to promoting collaboration and improving relationships" },
+        { "indicator_number": "28", "indicator": "Talks about the mission, strategy, and plans with regularity" },
+        { "indicator_number": "29", "indicator": "Strives to understand the needs and expectations of others" },
+        { "indicator_number": "30", "indicator": "Communicates clearly the reason for change" }
+      ]
+    },
+    {
+      "domain_number": "5",
+      "domain_name": "Societal Effectiveness",
+      "questions": [
+        { "indicator_number": "31", "indicator": "Engages relevant stakeholders in planning and implementing programs and activities" },
+        { "indicator_number": "32", "indicator": "Empowers employees through involving them in decision-making processes" },
+        { "indicator_number": "33", "indicator": "Manages resources effectively and efficiently to achieve objectives" },
+        { "indicator_number": "34", "indicator": "Prioritises the health, needs, and well-being of employees" },
+        { "indicator_number": "35", "indicator": "Ensures that environmental health and safety measures are in place to provide safe environment for all" }
+      ]
+    }
+  ],
+  "comments_prompts": {
+    "positive_feedback": "Say something positive about the person.",
+    "improvement_suggestion": "Suggestions for improvement."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "code": "NIMER-EES",
+  "title": "NIMER Employee Evaluation Scale",
+  "description": "Employee performance evaluation questionnaire based on NIMER Employee Performance Evaluation Tool.",
+  "source_file": "docs/NIMER-EMPLOYEE-EVALUATION-SCALE-MSMC.pdf",
+  "respondent_fields": [
+    "employee_name",
+    "employee_number",
+    "department",
+    "rank",
+    "date"
+  ],
+  "privacy_reminder": "The data gathered will be handled in accordance with RA 10173 or the Data Privacy Act of 2012, and will be utilised only for the intended purpose.",
+  "rating_scale": [
+    {
+      "value": 5,
+      "label": "OUTSTANDING",
+      "definition": "Exceptional Performance. The employee is an exceptional performer.",
+      "mean_equivalent": "4.21-5.00"
+    },
+    {
+      "value": 4,
+      "label": "VERY SATISFACTORY",
+      "definition": "Exceeds Standards. The employee exceeds established standards.",
+      "mean_equivalent": "3.41-4.20"
+    },
+    {
+      "value": 3,
+      "label": "SATISFACTORY",
+      "definition": "Fully Meets Standards. The employee meets established standards.",
+      "mean_equivalent": "2.61-3.40"
+    },
+    {
+      "value": 2,
+      "label": "BELOW SATISFACTORY",
+      "definition": "Below Standards. The employee is inconsistent in meeting most established standards.",
+      "mean_equivalent": "1.81-2.60"
+    },
+    {
+      "value": 1,
+      "label": "UNSATISFACTORY",
+      "definition": "Fails to Meet Standards. The employee does not meet minimum established standards.",
+      "mean_equivalent": "1.00-1.80"
+    }
+  ],
+  "questionnaire_content": [
+    {
+      "domain_number": "1",
+      "domain_name": "Engagement",
+      "domain_description": "Commitment to the institution, to the job, to the unit/office, to coworkers, and to policies and procedures.",
+      "questions": [
+        { "indicator_number": "1", "indicator": "Shows a positive attitude at work" },
+        { "indicator_number": "2", "indicator": "Interacts well with other members of the organisation" },
+        { "indicator_number": "3", "indicator": "Helps create a productive work environment" },
+        { "indicator_number": "4", "indicator": "Is optimistic about growing professionally in this organisation" },
+        { "indicator_number": "5", "indicator": "Accepts willingly new assignments or additional tasks" },
+        { "indicator_number": "6", "indicator": "Cooperates with the team/unit to attain goals" },
+        { "indicator_number": "7", "indicator": "Follows safety standards and promotes a safe workplace" }
+      ]
+    },
+    {
+      "domain_number": "2",
+      "domain_name": "Energy",
+      "domain_description": "The employee brings a contagious positive energy in the workplace, promoting productivity, and going above and beyond what is required.",
+      "questions": [
+        { "indicator_number": "8", "indicator": "Is willing to work overtime if necessary" },
+        { "indicator_number": "9", "indicator": "Volunteers to do things without being asked" },
+        { "indicator_number": "10", "indicator": "Does more than what is required to get the job done" },
+        { "indicator_number": "11", "indicator": "Assists co-workers with issues relating to their jobs" },
+        { "indicator_number": "12", "indicator": "Reports to work ready" },
+        { "indicator_number": "13", "indicator": "Delivers work on time and in accordance with office policies and procedures" },
+        { "indicator_number": "14", "indicator": "Perseveres in finishing tasks/assignments despite challenges" }
+      ]
+    },
+    {
+      "domain_number": "3",
+      "domain_name": "Influence",
+      "domain_description": "Makes a positive impression at work, respected by coworkers, and shows concern for others.",
+      "questions": [
+        { "indicator_number": "15", "indicator": "Instead of complaining, seeks solutions to problems" },
+        { "indicator_number": "16", "indicator": "Is respected by his/her coworkers" },
+        { "indicator_number": "17", "indicator": "Genuinely cares about the success of the team or unit" },
+        { "indicator_number": "18", "indicator": "Demonstrates a calm and steady presence even in challenging situations" },
+        { "indicator_number": "19", "indicator": "Is comfortable asking for assistance from others when necessary" },
+        { "indicator_number": "20", "indicator": "Has the ability to resolve conflicts at work" },
+        { "indicator_number": "21", "indicator": "Has the ability to make decisions and stick to them" }
+      ]
+    },
+    {
+      "domain_number": "4",
+      "domain_name": "Quality",
+      "domain_description": "Delivers quality outputs, uses resources efficiently and effectively.",
+      "questions": [
+        { "indicator_number": "22", "indicator": "Sets high standards for one's performance" },
+        { "indicator_number": "23", "indicator": "Uses time effectively by getting more of the important work done in a day" },
+        { "indicator_number": "24", "indicator": "Efficiently uses resources to complete assigned tasks" },
+        { "indicator_number": "25", "indicator": "Consistently produces quality outputs in a timely manner" },
+        { "indicator_number": "26", "indicator": "Demonstrates attention to detail" },
+        { "indicator_number": "27", "indicator": "Willing to take on difficult and challenging tasks" },
+        { "indicator_number": "28", "indicator": "Coworkers value and respect his/her work" }
+      ]
+    },
+    {
+      "domain_number": "5",
+      "domain_name": "Technical Ability",
+      "domain_description": "The employee has the required sets of knowledge, skills, and abilities to perform assigned tasks.",
+      "questions": [
+        { "indicator_number": "29", "indicator": "Keeps job knowledge up-to-date" },
+        { "indicator_number": "30", "indicator": "Keeps job skills up-to-date" },
+        { "indicator_number": "31", "indicator": "Demonstrates a thorough understanding of the job" },
+        { "indicator_number": "32", "indicator": "Recognised by peers for technical expertise" },
+        { "indicator_number": "33", "indicator": "Performs tasks specific to area of expertise reliably, skilfully, and accurately" },
+        { "indicator_number": "34", "indicator": "Completes difficult tasks without supervisory assistance" },
+        { "indicator_number": "35", "indicator": "Directs/Assists co-workers in carrying out highly technical tasks" }
+      ]
+    },
+    {
+      "domain_number": "6",
+      "domain_name": "Results",
+      "domain_description": "The employee knows what is expected and focuses on delivering that.",
+      "questions": [
+        { "indicator_number": "36", "indicator": "Consistently achieves agreed-upon targets" },
+        { "indicator_number": "37", "indicator": "Prioritises tasks that need to be performed in order to meet certain goals" },
+        { "indicator_number": "38", "indicator": "Knows what the ideal outcomes are and helps the team in achieving them" },
+        { "indicator_number": "39", "indicator": "Always seeks to find ways to improve performance" },
+        { "indicator_number": "40", "indicator": "Willing to challenge co-workers and help them address poor performance" },
+        { "indicator_number": "41", "indicator": "Takes actions that result in measurable service improvements" },
+        { "indicator_number": "42", "indicator": "Accepts accountability for results" }
+      ]
+    }
+  ],
+  "comments_prompts": {
+    "positive_feedback": "Say something positive about the person.",
+    "improvement_suggestion": "Suggestions for improvement."
+  }
+}
