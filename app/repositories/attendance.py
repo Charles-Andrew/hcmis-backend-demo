@@ -126,7 +126,7 @@ class EmployeeShiftAssignmentRepository:
             select(EmployeeShiftAssignment)
             .options(
                 selectinload(EmployeeShiftAssignment.shift_template),
-                selectinload(EmployeeShiftAssignment.user),
+                selectinload(EmployeeShiftAssignment.user).selectinload(User.department),
             )
             .join(EmployeeShiftAssignment.user)
             .where(
@@ -145,7 +145,7 @@ class EmployeeShiftAssignmentRepository:
             select(EmployeeShiftAssignment)
             .options(
                 selectinload(EmployeeShiftAssignment.shift_template),
-                selectinload(EmployeeShiftAssignment.user),
+                selectinload(EmployeeShiftAssignment.user).selectinload(User.department),
             )
             .where(
                 EmployeeShiftAssignment.user_id == user_id,
@@ -158,7 +158,12 @@ class EmployeeShiftAssignmentRepository:
 
     async def get_by_id(self, schedule_id: int) -> EmployeeShiftAssignment | None:
         result = await self.session.execute(
-            select(EmployeeShiftAssignment).where(EmployeeShiftAssignment.id == schedule_id)
+            select(EmployeeShiftAssignment)
+            .options(
+                selectinload(EmployeeShiftAssignment.shift_template),
+                selectinload(EmployeeShiftAssignment.user).selectinload(User.department),
+            )
+            .where(EmployeeShiftAssignment.id == schedule_id)
         )
         return result.scalar_one_or_none()
 
@@ -176,13 +181,13 @@ class EmployeeShiftAssignmentRepository:
     async def create(self, schedule: EmployeeShiftAssignment) -> EmployeeShiftAssignment:
         self.session.add(schedule)
         await self.session.commit()
-        await self.session.refresh(schedule)
-        return schedule
+        loaded = await self.get_by_id(schedule.id)
+        return loaded if loaded is not None else schedule
 
     async def save(self, schedule: EmployeeShiftAssignment) -> EmployeeShiftAssignment:
         await self.session.commit()
-        await self.session.refresh(schedule)
-        return schedule
+        loaded = await self.get_by_id(schedule.id)
+        return loaded if loaded is not None else schedule
 
     async def delete(self, schedule: EmployeeShiftAssignment) -> None:
         await self.session.delete(schedule)
