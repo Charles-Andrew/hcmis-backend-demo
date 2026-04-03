@@ -1,11 +1,13 @@
 from collections.abc import AsyncGenerator
+from hmac import compare_digest
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.capabilities import is_staff_user
+from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_session
 from app.models.user import User
@@ -55,3 +57,19 @@ async def require_staff_user(current_user: User = Depends(get_current_user)) -> 
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Not enough permissions.",
     )
+
+
+async def require_bridge_agent(
+    x_agent_key: str | None = Header(default=None, alias="X-Agent-Key"),
+) -> None:
+    configured = settings.bridge_agent_key
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bridge agent key is not configured.",
+        )
+    if x_agent_key is None or not compare_digest(x_agent_key, configured):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bridge agent key.",
+        )

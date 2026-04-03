@@ -3,6 +3,8 @@ from app.models.app_log import AppLog
 from app.models.chat import Message
 from app.models.attendance import (
     AttendanceRecord,
+    BridgeCommand,
+    BridgeUserSnapshot,
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
@@ -31,6 +33,8 @@ __all__ = [
     "Base",
     "AppLog",
     "AttendanceRecord",
+    "BridgeCommand",
+    "BridgeUserSnapshot",
     "DepartmentRosterDay",
     "EmployeeShiftAssignment",
     "Department",

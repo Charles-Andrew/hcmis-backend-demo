@@ -1,11 +1,14 @@
+import json
 from datetime import date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.attendance import (
     AttendanceRecord,
+    BridgeCommand,
+    BridgeUserSnapshot,
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
@@ -400,6 +403,153 @@ class ShiftSwapRepository:
     async def delete(self, swap: ShiftSwapRequest) -> None:
         await self.session.delete(swap)
         await self.session.commit()
+
+
+class BridgeCommandRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        *,
+        site_code: str,
+        device_id: str,
+        command_type: str,
+        payload: dict,
+        created_by_user_id: int | None,
+    ) -> BridgeCommand:
+        command = BridgeCommand(
+            site_code=site_code,
+            device_id=device_id,
+            command_type=command_type,
+            payload_json=json.dumps(payload),
+            status="queued",
+            created_by_user_id=created_by_user_id,
+        )
+        self.session.add(command)
+        await self.session.commit()
+        await self.session.refresh(command)
+        return command
+
+    async def dispatch_queued(
+        self,
+        *,
+        site_code: str,
+        device_id: str,
+        limit: int,
+        dispatched_at: datetime,
+    ) -> list[BridgeCommand]:
+        result = await self.session.execute(
+            select(BridgeCommand)
+            .where(
+                BridgeCommand.site_code == site_code,
+                BridgeCommand.device_id == device_id,
+                BridgeCommand.status == "queued",
+            )
+            .order_by(BridgeCommand.created_at.asc(), BridgeCommand.id.asc())
+            .limit(limit)
+        )
+        commands = list(result.scalars().all())
+        for command in commands:
+            command.status = "dispatched"
+            command.dispatched_at = dispatched_at
+        if commands:
+            await self.session.commit()
+            for command in commands:
+                await self.session.refresh(command)
+        return commands
+
+    async def get_by_id(self, command_id: int) -> BridgeCommand | None:
+        result = await self.session.execute(
+            select(BridgeCommand).where(BridgeCommand.id == command_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def save(self, command: BridgeCommand) -> BridgeCommand:
+        await self.session.commit()
+        await self.session.refresh(command)
+        return command
+
+    async def list_for_site_device(
+        self, *, site_code: str, device_id: str, limit: int
+    ) -> list[BridgeCommand]:
+        result = await self.session.execute(
+            select(BridgeCommand)
+            .where(
+                BridgeCommand.site_code == site_code,
+                BridgeCommand.device_id == device_id,
+            )
+            .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+class BridgeUserSnapshotRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def replace_for_site_device(
+        self,
+        *,
+        site_code: str,
+        device_id: str,
+        scanned_at: datetime,
+        users: list[dict],
+    ) -> int:
+        await self.session.execute(
+            delete(BridgeUserSnapshot).where(
+                BridgeUserSnapshot.site_code == site_code,
+                BridgeUserSnapshot.device_id == device_id,
+            )
+        )
+
+        deduped: dict[int, dict] = {}
+        for row in users:
+            biometric_uid = row.get("biometric_uid")
+            if not isinstance(biometric_uid, int):
+                continue
+            deduped[biometric_uid] = {
+                "biometric_uid": biometric_uid,
+                "name": _normalize_snapshot_name(row.get("name")),
+            }
+
+        for row in deduped.values():
+            self.session.add(
+                BridgeUserSnapshot(
+                    site_code=site_code,
+                    device_id=device_id,
+                    biometric_uid=row["biometric_uid"],
+                    name=row["name"],
+                    scanned_at=scanned_at,
+                )
+            )
+
+        await self.session.commit()
+        return len(deduped)
+
+    async def list_for_site_device(
+        self, *, site_code: str, device_id: str
+    ) -> list[BridgeUserSnapshot]:
+        result = await self.session.execute(
+            select(BridgeUserSnapshot)
+            .where(
+                BridgeUserSnapshot.site_code == site_code,
+                BridgeUserSnapshot.device_id == device_id,
+            )
+            .order_by(BridgeUserSnapshot.biometric_uid.asc())
+        )
+        return list(result.scalars().all())
+
+
+def _normalize_snapshot_name(value: object) -> str:
+    if value is None:
+        return ""
+
+    # Bridge snapshots may include fixed-width name buffers with null bytes.
+    # Strip those artifacts and collapse whitespace so full names render cleanly.
+    text = str(value).replace("\x00", " ").strip()
+    return " ".join(text.split())
 
 
 ShiftRepository = ShiftTemplateRepository

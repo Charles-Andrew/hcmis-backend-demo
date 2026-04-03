@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default=50,
         validation_alias="SHARED_RESOURCES_MAX_FILE_SIZE_MB",
     )
+    bridge_agent_key: str = Field(
+        default="",
+        validation_alias="BRIDGE_AGENT_KEY",
+    )
 
 
 @lru_cache

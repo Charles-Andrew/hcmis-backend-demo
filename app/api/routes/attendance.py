@@ -5,9 +5,14 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db_session, require_staff_user
+from app.api.deps import (
+    get_current_user,
+    get_db_session,
+    require_bridge_agent,
+    require_staff_user,
+)
 from app.core.capabilities import is_staff_user
-from app.core.exceptions import PermissionDeniedError
+from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.models.attendance import (
     AttendanceRecord,
     DepartmentRosterDay,
@@ -24,6 +29,21 @@ from app.schemas.attendance import (
     AttendanceRecordRead,
     AttendanceRecordUpdateRequest,
     AttendanceSummaryRead,
+    BridgeBiometricSnapshotRequest,
+    BridgeBiometricSnapshotResponse,
+    BridgeCommandScanUsersCreateRequest,
+    BridgeCommandAckRequest,
+    BridgeCommandRead,
+    BridgeCommandsResponse,
+    BridgeCommandSyncUsersCreateRequest,
+    BridgeHeartbeatRequest,
+    BridgeHeartbeatResponse,
+    BridgeLogsRequest,
+    BridgeLogsResponse,
+    BridgeReconcileResponse,
+    BridgeReconcileRow,
+    BridgeUserRead,
+    BridgeUsersResponse,
     DepartmentShiftPolicyRead,
     DepartmentScheduleUpdateRequest,
     DepartmentRosterDayCreateRequest,
@@ -48,6 +68,16 @@ from app.schemas.attendance import (
     ShiftSwapRequestRead,
     ShiftSwapRequestRespondRequest,
     ShiftTemplateUpdateRequest,
+)
+from app.core.time import utc_now
+from app.repositories.attendance import BridgeUserSnapshotRepository
+from app.repositories.users import UserRepository
+from app.services.bridge_commands import (
+    ack_command,
+    dispatch_commands,
+    list_site_device_commands,
+    queue_scan_users_command,
+    queue_sync_users_command,
 )
 from app.services.attendance import (
     create_attendance_record,
@@ -85,6 +115,245 @@ from app.services.attendance import (
 )
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
+
+
+@router.post("/bridge/commands/sync-users", response_model=BridgeCommandRead, status_code=status.HTTP_201_CREATED)
+async def post_bridge_sync_users_command(
+    payload: BridgeCommandSyncUsersCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> BridgeCommandRead:
+    return await queue_sync_users_command(
+        session,
+        payload=payload,
+        requested_by_user_id=current_user.id,
+    )
+
+
+@router.post("/bridge/commands/scan-users", response_model=BridgeCommandRead, status_code=status.HTTP_201_CREATED)
+async def post_bridge_scan_users_command(
+    payload: BridgeCommandScanUsersCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> BridgeCommandRead:
+    return await queue_scan_users_command(
+        session,
+        payload=payload,
+        requested_by_user_id=current_user.id,
+    )
+
+
+@router.get("/bridge/commands", response_model=BridgeCommandsResponse)
+async def get_bridge_commands(
+    site_code: str = Query(..., min_length=1),
+    device_id: str = Query(..., min_length=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_bridge_agent),
+) -> BridgeCommandsResponse:
+    commands = await dispatch_commands(
+        session,
+        site_code=site_code,
+        device_id=device_id,
+        limit=limit,
+    )
+    return BridgeCommandsResponse(commands=commands)
+
+
+@router.post("/bridge/commands/{command_id}/ack", response_model=BridgeCommandRead)
+async def post_bridge_command_ack(
+    command_id: int,
+    payload: BridgeCommandAckRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_bridge_agent),
+) -> BridgeCommandRead:
+    return await ack_command(
+        session,
+        command_id=command_id,
+        payload=payload,
+    )
+
+
+@router.get("/bridge/commands/history", response_model=BridgeCommandsResponse)
+async def get_bridge_commands_history(
+    site_code: str = Query(..., min_length=1),
+    device_id: str = Query(..., min_length=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> BridgeCommandsResponse:
+    _ = current_user
+    commands = await list_site_device_commands(
+        session,
+        site_code=site_code,
+        device_id=device_id,
+        limit=limit,
+    )
+    return BridgeCommandsResponse(commands=commands)
+
+
+@router.get("/bridge/users", response_model=BridgeUsersResponse)
+async def get_bridge_users(
+    site_code: str = Query(..., min_length=1),
+    device_id: str = Query(..., min_length=1),
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_bridge_agent),
+) -> BridgeUsersResponse:
+    # site_code/device_id are required for parity with bridge endpoint contract
+    del site_code, device_id
+    users = await UserRepository(session).list(include_superusers=False)
+    response_users = [
+        BridgeUserRead(
+            user_id=user.id,
+            biometric_uid=user.biometric_uid,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_active=user.is_active,
+        )
+        for user in users
+        if user.biometric_uid is not None
+    ]
+    return BridgeUsersResponse(users=response_users)
+
+
+def _bridge_punch_to_attendance(punch: int | None) -> Literal["IN", "OUT"]:
+    if punch in {1, 3, 5, 7}:
+        return "OUT"
+    return "IN"
+
+
+@router.post("/bridge/logs", response_model=BridgeLogsResponse)
+async def post_bridge_logs(
+    payload: BridgeLogsRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_bridge_agent),
+) -> BridgeLogsResponse:
+    accepted = 0
+    duplicates = 0
+    unknown_users = 0
+    failed = 0
+    for event in payload.events:
+        device_user_id_raw = str(event.device_user_id).strip()
+        if not device_user_id_raw.isdigit():
+            failed += 1
+            continue
+        try:
+            await sync_device_attendance(
+                session,
+                device_user_id=int(device_user_id_raw),
+                timestamp=event.timestamp,
+                punch=_bridge_punch_to_attendance(event.punch),
+            )
+            accepted += 1
+        except ConflictError:
+            duplicates += 1
+        except NotFoundError:
+            unknown_users += 1
+        except Exception:
+            failed += 1
+    return BridgeLogsResponse(
+        accepted=accepted,
+        duplicates=duplicates,
+        unknown_users=unknown_users,
+        failed=failed,
+    )
+
+
+@router.post("/bridge/heartbeat", response_model=BridgeHeartbeatResponse)
+async def post_bridge_heartbeat(
+    payload: BridgeHeartbeatRequest,
+    _: None = Depends(require_bridge_agent),
+) -> BridgeHeartbeatResponse:
+    del payload
+    return BridgeHeartbeatResponse(status="ok")
+
+
+@router.post("/bridge/users/snapshot", response_model=BridgeBiometricSnapshotResponse)
+async def post_bridge_users_snapshot(
+    payload: BridgeBiometricSnapshotRequest,
+    session: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_bridge_agent),
+) -> BridgeBiometricSnapshotResponse:
+    stored_users = await BridgeUserSnapshotRepository(session).replace_for_site_device(
+        site_code=payload.site_code,
+        device_id=payload.device_id,
+        scanned_at=payload.scanned_at or utc_now(),
+        users=[user.model_dump() for user in payload.users],
+    )
+    return BridgeBiometricSnapshotResponse(status="ok", stored_users=stored_users)
+
+
+@router.get("/bridge/reconcile", response_model=BridgeReconcileResponse)
+async def get_bridge_reconcile(
+    site_code: str = Query(..., min_length=1),
+    device_id: str = Query(..., min_length=1),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> BridgeReconcileResponse:
+    _ = current_user
+    app_users = await UserRepository(session).list(include_superusers=True)
+    biometric_users = await BridgeUserSnapshotRepository(session).list_for_site_device(
+        site_code=site_code,
+        device_id=device_id,
+    )
+
+    merged: dict[str, BridgeReconcileRow] = {}
+    for app_user in app_users:
+        app_name = " ".join(
+            part
+            for part in [app_user.first_name or "", app_user.last_name or ""]
+            if part
+        ).strip() or app_user.email
+        if app_user.biometric_uid is None:
+            key = f"app:{app_user.id}"
+            merged[key] = BridgeReconcileRow(
+                key=key,
+                biometric_uid=None,
+                app_user_id=app_user.id,
+                app_name=app_name,
+                biometric_name=None,
+                present_in_app=True,
+                present_in_biometric=False,
+            )
+            continue
+
+        key = f"uid:{app_user.biometric_uid}"
+        merged[key] = BridgeReconcileRow(
+            key=key,
+            biometric_uid=app_user.biometric_uid,
+            app_user_id=app_user.id,
+            app_name=app_name,
+            biometric_name=None,
+            present_in_app=True,
+            present_in_biometric=False,
+        )
+
+    for biometric_user in biometric_users:
+        key = f"uid:{biometric_user.biometric_uid}"
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = BridgeReconcileRow(
+                key=key,
+                biometric_uid=biometric_user.biometric_uid,
+                app_user_id=None,
+                app_name=None,
+                biometric_name=biometric_user.name,
+                present_in_app=False,
+                present_in_biometric=True,
+            )
+            continue
+        existing.biometric_name = biometric_user.name
+        existing.present_in_biometric = True
+
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda row: (
+            row.biometric_uid is None,
+            row.biometric_uid if row.biometric_uid is not None else 0,
+            (row.app_name or row.biometric_name or "").lower(),
+        )
+    )
+    return BridgeReconcileResponse(site_code=site_code, device_id=device_id, rows=rows)
 
 
 @router.get("/shifts", response_model=list[ShiftTemplateRead], include_in_schema=False)

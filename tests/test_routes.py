@@ -17,6 +17,14 @@ def test_core_routes_are_registered():
     assert "/profile/me" in paths
     assert "/attendance/shifts" in paths
     assert "/attendance/device/getrequest" in paths
+    assert "/attendance/bridge/users" in paths
+    assert "/attendance/bridge/commands/sync-users" in paths
+    assert "/attendance/bridge/commands/scan-users" in paths
+    assert "/attendance/bridge/commands" in paths
+    assert "/attendance/bridge/commands/{command_id}/ack" in paths
+    assert "/attendance/bridge/commands/history" in paths
+    assert "/attendance/bridge/users/snapshot" in paths
+    assert "/attendance/bridge/reconcile" in paths
     assert "/attendance/me/{year}/{month}" in paths
     assert "/attendance/users/{user_id}/{year}/{month}" in paths
     assert "/users/{user_id}/biometric" in paths

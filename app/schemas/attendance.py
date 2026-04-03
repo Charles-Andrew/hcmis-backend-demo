@@ -250,6 +250,117 @@ class AttendanceSummaryRead(BaseModel):
     days: list[AttendanceSummaryDayRead]
 
 
+class BridgeUserRead(BaseModel):
+    user_id: int
+    biometric_uid: int
+    first_name: str
+    last_name: str
+    is_active: bool
+
+
+class BridgeUsersResponse(BaseModel):
+    users: list[BridgeUserRead] = Field(default_factory=list)
+
+
+class BridgeCommandSyncUsersCreateRequest(BaseModel):
+    site_code: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128)
+
+
+class BridgeCommandScanUsersCreateRequest(BaseModel):
+    site_code: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128)
+
+
+class BridgeCommandAckRequest(BaseModel):
+    status: Literal["done", "failed"]
+    message: str | None = None
+    executed_at: datetime | None = None
+
+
+class BridgeCommandRead(BaseModel):
+    command_id: int
+    site_code: str
+    device_id: str
+    type: str
+    payload: dict = Field(default_factory=dict)
+    status: str
+    message: str | None = None
+    created_at: datetime
+    dispatched_at: datetime | None = None
+    executed_at: datetime | None = None
+
+
+class BridgeCommandsResponse(BaseModel):
+    commands: list[BridgeCommandRead] = Field(default_factory=list)
+
+
+class BridgeLogEventRequest(BaseModel):
+    device_user_id: str
+    timestamp: datetime
+    status: int | None = None
+    punch: int | None = None
+    raw_event_id: str | None = None
+
+
+class BridgeLogsRequest(BaseModel):
+    site_code: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128)
+    events: list[BridgeLogEventRequest] = Field(default_factory=list)
+
+
+class BridgeLogsResponse(BaseModel):
+    accepted: int = 0
+    duplicates: int = 0
+    unknown_users: int = 0
+    failed: int = 0
+
+
+class BridgeHeartbeatRequest(BaseModel):
+    site_code: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128)
+    agent_version: str | None = None
+    device_reachable: bool
+    last_sync_at: str | None = None
+
+
+class BridgeHeartbeatResponse(BaseModel):
+    status: str = "ok"
+
+
+class BridgeBiometricSnapshotUser(BaseModel):
+    biometric_uid: int
+    name: str = ""
+
+
+class BridgeBiometricSnapshotRequest(BaseModel):
+    site_code: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128)
+    scanned_at: datetime | None = None
+    users: list[BridgeBiometricSnapshotUser] = Field(default_factory=list)
+
+
+class BridgeBiometricSnapshotResponse(BaseModel):
+    status: str = "ok"
+    stored_users: int = 0
+
+
+class BridgeReconcileRow(BaseModel):
+    key: str
+    biometric_uid: int | None = None
+    app_user_id: int | None = None
+    app_name: str | None = None
+    biometric_name: str | None = None
+    present_in_app: bool
+    present_in_biometric: bool
+
+
+class BridgeReconcileResponse(BaseModel):
+    site_code: str
+    device_id: str
+    rows: list[BridgeReconcileRow] = Field(default_factory=list)
+
+
 ShiftRead = ShiftTemplateRead
 DepartmentScheduleRead = DepartmentShiftPolicyRead
 ShiftCreateRequest = ShiftTemplateCreateRequest
