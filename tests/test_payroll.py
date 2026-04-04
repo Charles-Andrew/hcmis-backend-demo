@@ -1,6 +1,7 @@
 import anyio
 from decimal import Decimal
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,12 +33,12 @@ class FakeDepartmentRepository:
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def list(self, include_superusers: bool = False, **kwargs):
@@ -172,7 +173,7 @@ class FakePayslipRepository:
     async def get_by_id(self, payslip_id: int):
         return self.items.get(payslip_id)
 
-    async def get_by_identity(self, user_id: int, month: int, year: int, period: str):
+    async def get_by_identity(self, user_id: UUID, month: int, year: int, period: str):
         for item in self.items.values():
             if (
                 item.user_id == user_id
@@ -248,7 +249,7 @@ class FakeThirteenthMonthPayRepository:
     async def get_by_id(self, item_id: int):
         return self.items.get(item_id)
 
-    async def get_by_identity(self, user_id: int, month: int, year: int):
+    async def get_by_identity(self, user_id: UUID, month: int, year: int):
         for item in self.items.values():
             if item.user_id == user_id and item.month == month and item.year == year:
                 return item
@@ -300,7 +301,7 @@ def _seed():
     job.departments = [dept]
     FakeJobRepository.jobs[1] = job
     user = User(
-        id=1,
+        id=UUID(int=1),
         email="employee@example.com",
         password_hash="hashed",
         first_name="Employee",
@@ -314,7 +315,7 @@ def _seed():
         updated_at=utc_now(),
     )
     user.department = dept
-    FakeUserRepository.users[1] = user
+    FakeUserRepository.users[UUID(int=1)] = user
 
     FakePayrollSettingRepository.setting = PayrollSetting(
         id=1,
@@ -379,13 +380,13 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    fixed.users = [FakeUserRepository.users[1]]
+    fixed.users = [FakeUserRepository.users[UUID(int=1)]]
     FakeFixedCompensationRepository.items[1] = fixed
 
     payslip = anyio.run(
         payroll_service.get_or_create_payslip,
         cast(AsyncSession, object()),
-        PayslipCreateRequest(user_id=1, month=1, year=2026, period="2ND"),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
     )
     assert payslip.salary == Decimal("1000.00")
 
@@ -430,12 +431,12 @@ def test_mp2_update_and_summary_deduction(monkeypatch):
         return await payroll_service.update_mp2(
             cast(AsyncSession, object()),
             amount=Decimal("123.45"),
-            user_ids=[1],
+            user_ids=[UUID(int=1)],
         )
 
     mp2 = anyio.run(_update_mp2)
     assert mp2.amount == Decimal("123.45")
-    assert mp2.users[0].id == 1
+    assert mp2.users[0].id == UUID(int=1)
 
     fixed = FixedCompensation(
         id=1,
@@ -446,13 +447,13 @@ def test_mp2_update_and_summary_deduction(monkeypatch):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    fixed.users = [FakeUserRepository.users[1]]
+    fixed.users = [FakeUserRepository.users[UUID(int=1)]]
     FakeFixedCompensationRepository.items[1] = fixed
 
     payslip = anyio.run(
         payroll_service.get_or_create_payslip,
         cast(AsyncSession, object()),
-        PayslipCreateRequest(user_id=1, month=1, year=2026, period="2ND"),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
     )
     summary = anyio.run(
         payroll_service.get_payslip_summary,
@@ -476,7 +477,7 @@ def test_thirteenth_month_pay_flow(monkeypatch):
     pay = anyio.run(
         payroll_service.create_thirteenth_month_pay,
         cast(AsyncSession, object()),
-        ThirteenthMonthPayCreateRequest(user_id=1, amount=Decimal("5000.00"), month=12, year=2026),
+        ThirteenthMonthPayCreateRequest(user_id=UUID(int=1), amount=Decimal("5000.00"), month=12, year=2026),
     )
     assert pay.amount == Decimal("5000.00")
 

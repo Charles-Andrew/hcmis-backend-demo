@@ -1,5 +1,6 @@
 import anyio
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,12 +11,12 @@ from app.services import users as user_service
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def save(self, user: User):
@@ -28,7 +29,7 @@ async def _get_profile(user: User):
     return user
 
 
-async def _update_profile(user_id: int, payload: UserProfileUpdateRequest):
+async def _update_profile(user_id: UUID, payload: UserProfileUpdateRequest):
     return await user_service.update_own_profile(
         session=cast(AsyncSession, object()),
         user_id=user_id,
@@ -42,7 +43,7 @@ def setup_function():
 
 def _make_user():
     return User(
-        id=1,
+        id=UUID(int=1),
         email="current.user@example.com",
         password_hash="hashed",
         first_name="Current",
@@ -85,7 +86,7 @@ def test_update_profile_updates_allowed_fields(monkeypatch):
 
     response = anyio.run(
         _update_profile,
-        1,
+        user.id,
         UserProfileUpdateRequest(
             first_name="Updated",
             last_name="Person",
@@ -100,4 +101,3 @@ def test_update_profile_updates_allowed_fields(monkeypatch):
     assert response.phone_number == "09171234567"
     assert response.rank == "Supervisor"
     assert response.gender == "M"
-

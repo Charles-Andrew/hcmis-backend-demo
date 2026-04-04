@@ -2,6 +2,7 @@ import anyio
 import pytest
 from datetime import date
 from typing import Literal, cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +30,12 @@ class FakeDepartmentRepository:
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
 
@@ -66,7 +67,7 @@ class FakeLeaveApproverRepository:
 
 
 class FakeLeaveCreditRepository:
-    leave_credits: dict[int, LeaveCredit] = {}
+    leave_credits: dict[UUID, LeaveCredit] = {}
 
     def __init__(self, session):
         self.session = session
@@ -74,7 +75,7 @@ class FakeLeaveCreditRepository:
     async def list(self):
         return list(self.leave_credits.values())
 
-    async def get_by_user_id(self, user_id: int):
+    async def get_by_user_id(self, user_id: UUID):
         return self.leave_credits.get(user_id)
 
     async def create(self, leave_credit: LeaveCredit):
@@ -95,9 +96,9 @@ class FakeLeaveRequestRepository:
 
     async def list(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         department_id: int | None = None,
-        approver_id: int | None = None,
+        approver_id: UUID | None = None,
         status: str | None = None,
         year: int | None = None,
         month: int | None = None,
@@ -150,7 +151,7 @@ class FakeLeaveRequestRepository:
 
 
 async def _create_leave(payload: dict) -> LeaveRequest:
-    employee = FakeUserRepository.users[1]
+    employee = FakeUserRepository.users[UUID(int=1)]
     return await leave_service.create_leave_request(
         cast(AsyncSession, object()),
         employee,
@@ -186,7 +187,7 @@ def _seed_users_and_department():
     FakeDepartmentRepository.departments[department.id] = department
 
     employee = User(
-        id=1,
+        id=UUID(int=1),
         email="employee@example.com",
         password_hash="hashed",
         first_name="Emp",
@@ -200,7 +201,7 @@ def _seed_users_and_department():
         updated_at=utc_now(),
     )
     dept_head = User(
-        id=2,
+        id=UUID(int=2),
         email="dept.head@example.com",
         password_hash="hashed",
         first_name="Dept",
@@ -214,7 +215,7 @@ def _seed_users_and_department():
         updated_at=utc_now(),
     )
     hr_user = User(
-        id=3,
+        id=UUID(int=3),
         email="hr@example.com",
         password_hash="hashed",
         first_name="Human",
@@ -228,7 +229,7 @@ def _seed_users_and_department():
         updated_at=utc_now(),
     )
     director = User(
-        id=4,
+        id=UUID(int=4),
         email="director@example.com",
         password_hash="hashed",
         first_name="Dir",
@@ -242,7 +243,7 @@ def _seed_users_and_department():
         updated_at=utc_now(),
     )
     president = User(
-        id=5,
+        id=UUID(int=5),
         email="president@example.com",
         password_hash="hashed",
         first_name="Pre",
@@ -295,8 +296,8 @@ def test_leave_request_creation_uses_department_chain(monkeypatch):
         {"leave_date": date(2026, 4, 1), "leave_type": "PA", "info": "Family matter"},
     )
 
-    assert leave_request.first_approver_id == 2
-    assert leave_request.second_approver_id == 3
+    assert leave_request.first_approver_id == UUID(int=2)
+    assert leave_request.second_approver_id == UUID(int=3)
     assert leave_request.status == LeaveRequestStatus.PENDING.value
 
 
@@ -316,18 +317,18 @@ def test_leave_request_review_approves_in_two_steps_and_consumes_credit(monkeypa
     )
 
     first_review = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[2], "APPROVE"
+        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE"
     )
     assert first_review.first_approver_status == LeaveRequestStatus.APPROVED.value
     assert first_review.status == LeaveRequestStatus.PENDING.value
-    assert FakeLeaveCreditRepository.leave_credits[1].used_credits == 0
+    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
 
     final_review = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[3], "APPROVE"
+        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=3)], "APPROVE"
     )
     assert final_review.second_approver_status == LeaveRequestStatus.APPROVED.value
     assert final_review.status == LeaveRequestStatus.APPROVED.value
-    assert FakeLeaveCreditRepository.leave_credits[1].used_credits == 1
+    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 1
 
 
 def test_leave_request_rejection_does_not_consume_credit(monkeypatch):
@@ -346,10 +347,10 @@ def test_leave_request_rejection_does_not_consume_credit(monkeypatch):
     )
 
     rejected = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[2], "REJECT"
+        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "REJECT"
     )
     assert rejected.status == LeaveRequestStatus.REJECTED.value
-    assert FakeLeaveCreditRepository.leave_credits[1].used_credits == 0
+    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
 
 
 def test_leave_request_deletion_reduces_used_credit_when_approved(monkeypatch):
@@ -366,17 +367,17 @@ def test_leave_request_deletion_reduces_used_credit_when_approved(monkeypatch):
         _create_leave,
         {"leave_date": date(2026, 4, 3), "leave_type": "PA", "info": "Vacation"},
     )
-    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[2], "APPROVE")
-    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[3], "APPROVE")
-    assert FakeLeaveCreditRepository.leave_credits[1].used_credits == 1
+    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE")
+    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=3)], "APPROVE")
+    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 1
 
     anyio.run(
         leave_service.delete_leave_request,
         cast(AsyncSession, object()),
         leave_request.id,
-        FakeUserRepository.users[1],
+        FakeUserRepository.users[UUID(int=1)],
     )
-    assert FakeLeaveCreditRepository.leave_credits[1].used_credits == 0
+    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
 
 
 def test_leave_credit_management_and_approver_settings(monkeypatch):
@@ -394,18 +395,18 @@ def test_leave_credit_management_and_approver_settings(monkeypatch):
         cast(AsyncSession, object()),
         1,
         LeaveApproverUpsertRequest(
-            department_approver_id=2,
-            director_approver_id=4,
-            president_approver_id=5,
-            hr_approver_id=3,
+            department_approver_id=UUID(int=2),
+            director_approver_id=UUID(int=4),
+            president_approver_id=UUID(int=5),
+            hr_approver_id=UUID(int=3),
         ),
     )
-    assert approver.department_approver_id == 2
+    assert approver.department_approver_id == UUID(int=2)
 
     credit = anyio.run(
         leave_service.set_leave_credit,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         LeaveCreditUpsertRequest(credits=15),
     )
     assert credit.credits == 15
@@ -413,7 +414,7 @@ def test_leave_credit_management_and_approver_settings(monkeypatch):
     reset_credit = anyio.run(
         leave_service.reset_leave_credit,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
     )
     assert reset_credit.used_credits == 0
 
@@ -427,8 +428,8 @@ def test_leave_credit_management_and_approver_settings(monkeypatch):
 def test_paid_leave_request_requires_available_credit(monkeypatch):
     _reset_fakes()
     _seed_users_and_department()
-    FakeLeaveCreditRepository.leave_credits[1].credits = 1
-    FakeLeaveCreditRepository.leave_credits[1].used_credits = 1
+    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].credits = 1
+    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits = 1
 
     monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
@@ -457,9 +458,9 @@ def test_paid_leave_final_approval_fails_when_credit_depleted(monkeypatch):
         _create_leave,
         {"leave_date": date(2026, 4, 8), "leave_type": "PA", "info": "Annual leave"},
     )
-    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[2], "APPROVE")
-    FakeLeaveCreditRepository.leave_credits[1].credits = 1
-    FakeLeaveCreditRepository.leave_credits[1].used_credits = 1
+    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE")
+    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].credits = 1
+    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits = 1
 
     with pytest.raises(leave_service.ConflictError):
-        anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[3], "APPROVE")
+        anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=3)], "APPROVE")

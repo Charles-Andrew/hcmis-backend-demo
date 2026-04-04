@@ -1,6 +1,7 @@
 import anyio
 from datetime import UTC, date, datetime, timedelta
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +17,7 @@ class FakeAppLogRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_for_date(self, selected_date: date, user_id: int | None = None):
+    async def list_for_date(self, selected_date: date, user_id: UUID | None = None):
         logs = [
             log
             for log in self.logs.values()
@@ -34,7 +35,7 @@ class FakeAppLogRepository:
         return log
 
 
-async def _list_app_logs(selected_date: date, user_id: int | None = None):
+async def _list_app_logs(selected_date: date, user_id: UUID | None = None):
     return await log_service.list_app_logs(
         session=cast(AsyncSession, object()),
         selected_date=selected_date,
@@ -42,7 +43,7 @@ async def _list_app_logs(selected_date: date, user_id: int | None = None):
     )
 
 
-async def _create_app_log(user_id: int, details: str):
+async def _create_app_log(user_id: UUID, details: str):
     return await log_service.create_app_log(
         session=cast(AsyncSession, object()),
         user_id=user_id,
@@ -55,7 +56,7 @@ def setup_function():
     FakeAppLogRepository.next_id = 1
 
 
-def _make_log(log_id: int, user_id: int, created_at: datetime):
+def _make_log(log_id: int, user_id: UUID, created_at: datetime):
     return AppLog(
         id=log_id,
         user_id=user_id,
@@ -68,14 +69,14 @@ def _make_log(log_id: int, user_id: int, created_at: datetime):
 def test_list_app_logs_filters_by_date_and_user(monkeypatch):
     today = datetime.now(UTC).date()
     yesterday = today - timedelta(days=1)
-    first = _make_log(1, 10, datetime.combine(today, datetime.min.time(), tzinfo=UTC))
-    second = _make_log(2, 20, datetime.combine(today, datetime.min.time(), tzinfo=UTC))
-    third = _make_log(3, 10, datetime.combine(yesterday, datetime.min.time(), tzinfo=UTC))
+    first = _make_log(1, UUID(int=10), datetime.combine(today, datetime.min.time(), tzinfo=UTC))
+    second = _make_log(2, UUID(int=20), datetime.combine(today, datetime.min.time(), tzinfo=UTC))
+    third = _make_log(3, UUID(int=10), datetime.combine(yesterday, datetime.min.time(), tzinfo=UTC))
     FakeAppLogRepository.logs = {first.id: first, second.id: second, third.id: third}
 
     monkeypatch.setattr(log_service, "AppLogRepository", FakeAppLogRepository)
 
-    response = anyio.run(_list_app_logs, today, 10)
+    response = anyio.run(_list_app_logs, today, UUID(int=10))
 
     assert [log.id for log in response] == [1]
 
@@ -83,8 +84,8 @@ def test_list_app_logs_filters_by_date_and_user(monkeypatch):
 def test_create_app_log_returns_created_log(monkeypatch):
     monkeypatch.setattr(log_service, "AppLogRepository", FakeAppLogRepository)
 
-    response = anyio.run(_create_app_log, 10, "Logged in.")
+    response = anyio.run(_create_app_log, UUID(int=10), "Logged in.")
 
     assert response.id == 1
-    assert response.user_id == 10
+    assert response.user_id == UUID(int=10)
     assert response.details == "Logged in."

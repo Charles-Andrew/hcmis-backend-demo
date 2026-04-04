@@ -1,5 +1,6 @@
 import anyio
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +24,7 @@ class FakeDepartmentRepository:
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
@@ -75,7 +76,7 @@ class FakeUserRepository:
             ),
         )
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def save(self, user: User):
@@ -89,7 +90,7 @@ async def _list_users(
     department_id: int | None = None,
     active_only: bool | None = None,
     exclude_hr: bool = False,
-    exclude_user_id: int | None = None,
+    exclude_user_id: UUID | None = None,
 ):
     return await user_service.list_users(
         session=cast(AsyncSession, object()),
@@ -101,7 +102,7 @@ async def _list_users(
     )
 
 
-async def _update_user(user_id: int, payload: UserUpdateRequest):
+async def _update_user(user_id: UUID, payload: UserUpdateRequest):
     return await user_service.update_user(
         session=cast(AsyncSession, object()),
         user_id=user_id,
@@ -109,14 +110,14 @@ async def _update_user(user_id: int, payload: UserUpdateRequest):
     )
 
 
-async def _toggle_user(user_id: int):
+async def _toggle_user(user_id: UUID):
     return await user_service.toggle_user_status(
         session=cast(AsyncSession, object()),
         user_id=user_id,
     )
 
 
-async def _update_biometric(user_id: int, payload: UserBiometricUpdateRequest):
+async def _update_biometric(user_id: UUID, payload: UserBiometricUpdateRequest):
     return await user_service.update_user_biometric_uid(
         session=cast(AsyncSession, object()),
         user_id=user_id,
@@ -136,7 +137,7 @@ def _make_department(department_id: int, name: str):
 
 
 def _make_user(
-    user_id: int,
+    user_id: UUID,
     first_name: str,
     last_name: str,
     email: str,
@@ -166,10 +167,10 @@ def test_list_users_filters_and_orders(monkeypatch):
     accounting = _make_department(1, "Accounting")
     hr = _make_department(2, "Human Resources")
 
-    first = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
-    second = _make_user(2, "Charlie", "C", "charlie@example.com", accounting, 1)
-    third = _make_user(3, "Bob", "B", "bob@example.com", hr, 2)
-    superuser = _make_user(4, "Admin", "User", "admin@example.com", hr, 2, is_superuser=True)
+    first = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    second = _make_user(UUID(int=2), "Charlie", "C", "charlie@example.com", accounting, 1)
+    third = _make_user(UUID(int=3), "Bob", "B", "bob@example.com", hr, 2)
+    superuser = _make_user(UUID(int=4), "Admin", "User", "admin@example.com", hr, 2, is_superuser=True)
 
     FakeUserRepository.users = {
         first.id: first,
@@ -189,10 +190,10 @@ def test_list_users_can_exclude_hr_users(monkeypatch):
     accounting = _make_department(1, "Accounting")
     hr = _make_department(2, "Human Resources")
 
-    emp = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
-    hr_role = _make_user(2, "Bob", "B", "bob@example.com", accounting, 1)
+    emp = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    hr_role = _make_user(UUID(int=2), "Bob", "B", "bob@example.com", accounting, 1)
     hr_role.role = "HR"
-    hr_department = _make_user(3, "Cara", "C", "cara@example.com", hr, 2)
+    hr_department = _make_user(UUID(int=3), "Cara", "C", "cara@example.com", hr, 2)
 
     FakeUserRepository.users = {
         emp.id: emp,
@@ -213,8 +214,8 @@ def test_list_users_can_exclude_hr_users(monkeypatch):
 def test_list_users_supports_query_and_department_filters(monkeypatch):
     accounting = _make_department(1, "Accounting")
     hr = _make_department(2, "Human Resources")
-    alice = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
-    bob = _make_user(2, "Bob", "B", "bob@example.com", hr, 2)
+    alice = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    bob = _make_user(UUID(int=2), "Bob", "B", "bob@example.com", hr, 2)
 
     FakeUserRepository.users = {alice.id: alice, bob.id: bob}
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
@@ -231,15 +232,15 @@ def test_list_users_supports_query_and_department_filters(monkeypatch):
 
 def test_list_users_can_exclude_a_specific_user(monkeypatch):
     accounting = _make_department(1, "Accounting")
-    alice = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
-    bob = _make_user(2, "Bob", "B", "bob@example.com", accounting, 1)
+    alice = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    bob = _make_user(UUID(int=2), "Bob", "B", "bob@example.com", accounting, 1)
 
     FakeUserRepository.users = {alice.id: alice, bob.id: bob}
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
 
-    response = anyio.run(_list_users, None, None, None, False, 2)
+    response = anyio.run(_list_users, None, None, None, False, UUID(int=2))
 
-    assert [user.id for user in response] == [1]
+    assert [user.id for user in response] == [UUID(int=1)]
 
 
 def test_update_user_changes_department_and_status(monkeypatch):
@@ -247,7 +248,7 @@ def test_update_user_changes_department_and_status(monkeypatch):
     hr = _make_department(2, "Human Resources")
     FakeDepartmentRepository.departments = {1: accounting, 2: hr}
 
-    user = _make_user(1, "Alice", "A", "alice@example.com", accounting, 1)
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
     FakeUserRepository.users = {user.id: user}
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
@@ -255,7 +256,7 @@ def test_update_user_changes_department_and_status(monkeypatch):
 
     response = anyio.run(
         _update_user,
-        1,
+        user.id,
         UserUpdateRequest(first_name="Alicia", department_id=2, is_active=False),
     )
 
@@ -265,14 +266,14 @@ def test_update_user_changes_department_and_status(monkeypatch):
 
 
 def test_update_user_missing_department_raises(monkeypatch):
-    user = _make_user(1, "Alice", "A", "alice@example.com", None, None)
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", None, None)
     FakeUserRepository.users = {user.id: user}
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
 
     try:
-        anyio.run(_update_user, 1, UserUpdateRequest(department_id=999))
+        anyio.run(_update_user, user.id, UserUpdateRequest(department_id=999))
     except NotFoundError as exc:
         assert exc.detail == "Department not found."
     else:
@@ -280,19 +281,19 @@ def test_update_user_missing_department_raises(monkeypatch):
 
 
 def test_toggle_user_status_flips_active_flag(monkeypatch):
-    user = _make_user(1, "Alice", "A", "alice@example.com", None, None, is_active=True)
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", None, None, is_active=True)
     FakeUserRepository.users = {user.id: user}
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
 
-    response = anyio.run(_toggle_user, 1)
+    response = anyio.run(_toggle_user, user.id)
 
     assert response.is_active is False
 
 
 def test_update_user_biometric_uid(monkeypatch):
-    user = _make_user(1, "Alice", "A", "alice@example.com", None, None)
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", None, None)
     FakeUserRepository.users = {user.id: user}
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
@@ -300,7 +301,7 @@ def test_update_user_biometric_uid(monkeypatch):
 
     response = anyio.run(
         _update_biometric,
-        1,
+        user.id,
         UserBiometricUpdateRequest(biometric_uid=99),
     )
 
@@ -308,16 +309,16 @@ def test_update_user_biometric_uid(monkeypatch):
 
 
 def test_update_user_biometric_uid_rejects_duplicates(monkeypatch):
-    first = _make_user(1, "Alice", "A", "alice@example.com", None, None)
-    second = _make_user(2, "Bob", "B", "bob@example.com", None, None)
+    first = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", None, None)
+    second = _make_user(UUID(int=2), "Bob", "B", "bob@example.com", None, None)
     first.biometric_uid = 99
-    FakeUserRepository.users = {1: first, 2: second}
+    FakeUserRepository.users = {first.id: first, second.id: second}
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
 
     try:
-        anyio.run(_update_biometric, 2, UserBiometricUpdateRequest(biometric_uid=99))
+        anyio.run(_update_biometric, second.id, UserBiometricUpdateRequest(biometric_uid=99))
     except NotFoundError as exc:
         assert exc.detail == "Biometric UID is already assigned to another user."
     else:

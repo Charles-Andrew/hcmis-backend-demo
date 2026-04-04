@@ -1,5 +1,6 @@
 import anyio
 from typing import cast
+from uuid import UUID
 
 from app.api.routes import auth as auth_routes
 from app.core.security import decode_access_token
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class FakeUserRepository:
     users_by_email: dict[str, User] = {}
-    users_by_id: dict[int, User] = {}
+    users_by_id: dict[UUID, User] = {}
     next_id = 1
 
     def __init__(self, session):
@@ -22,11 +23,11 @@ class FakeUserRepository:
     async def get_by_email(self, email: str):
         return self.users_by_email.get(email)
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users_by_id.get(user_id)
 
     async def create(self, user: User):
-        user.id = self.next_id
+        user.id = UUID(int=self.next_id)
         self.next_id += 1
         user.created_at = user.created_at or utc_now()
         user.updated_at = user.updated_at or utc_now()
@@ -79,7 +80,7 @@ def test_register_returns_created_user(monkeypatch):
 
 def test_login_returns_token_and_user(monkeypatch):
     user = User(
-        id=7,
+        id=UUID(int=7),
         email="jane.doe@example.com",
         password_hash="hashed",
         first_name="Jane",
@@ -110,12 +111,12 @@ def test_login_returns_token_and_user(monkeypatch):
     assert response.user.email == user.email
     assert "view_dashboard_home" in response.user.capabilities
     assert "access_hr_workspace" not in response.user.capabilities
-    assert decode_access_token(response.access_token)["sub"] == "7"
+    assert decode_access_token(response.access_token)["sub"] == str(user.id)
 
 
 def test_me_returns_current_user_with_capabilities():
     user = User(
-        id=11,
+        id=UUID(int=11),
         email="current.user@example.com",
         password_hash="hashed",
         first_name="Current",
@@ -136,7 +137,7 @@ def test_me_returns_current_user_with_capabilities():
 
 def test_me_includes_hr_workspace_capability_for_hr_user():
     user = User(
-        id=12,
+        id=UUID(int=12),
         email="hr.user@example.com",
         password_hash="hashed",
         first_name="HR",

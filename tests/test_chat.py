@@ -1,5 +1,6 @@
 import anyio
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +13,12 @@ from app.services import chat as chat_service
 
 
 class FakeChatUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def list_accessible(self, current_user: User, query: str | None = None):
@@ -56,15 +57,15 @@ class FakeMessageRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_between(self, user_a_id: int, user_b_id: int):
+    async def list_between(self, user_a_id: UUID, user_b_id: UUID):
         return [
             item
             for item in sorted(self.items.values(), key=lambda item: (item.created_at, item.id))
             if {item.sender_id, item.receiver_id} == {user_a_id, user_b_id}
         ]
 
-    async def list_unseen_counts_for_receiver(self, receiver_id: int):
-        counts: dict[int, int] = {}
+    async def list_unseen_counts_for_receiver(self, receiver_id: UUID):
+        counts: dict[UUID, int] = {}
         for item in self.items.values():
             if item.receiver_id == receiver_id and not item.seen:
                 counts[item.sender_id] = counts.get(item.sender_id, 0) + 1
@@ -84,7 +85,7 @@ class FakeMessageRepository:
         self.items[message.id] = message
         return message
 
-    async def mark_seen_between(self, sender_id: int, receiver_id: int):
+    async def mark_seen_between(self, sender_id: UUID, receiver_id: UUID):
         count = 0
         for item in self.items.values():
             if item.sender_id == sender_id and item.receiver_id == receiver_id and not item.seen:
@@ -102,7 +103,7 @@ def _reset():
 def _seed():
     dept = Department(id=1, name="Operations", code="OPS", is_active=True, workweek=[])
     hr = User(
-        id=1,
+        id=UUID(int=1),
         email="hr@example.com",
         password_hash="hashed",
         first_name="Harriet",
@@ -117,7 +118,7 @@ def _seed():
     )
     hr.department = dept
     employee = User(
-        id=2,
+        id=UUID(int=2),
         email="employee@example.com",
         password_hash="hashed",
         first_name="Eddie",
@@ -132,7 +133,7 @@ def _seed():
     )
     employee.department = dept
     director = User(
-        id=3,
+        id=UUID(int=3),
         email="director@example.com",
         password_hash="hashed",
         first_name="Dana",
@@ -146,7 +147,7 @@ def _seed():
         updated_at=utc_now(),
     )
     director.department = dept
-    FakeChatUserRepository.users = {1: hr, 2: employee, 3: director}
+    FakeChatUserRepository.users = {hr.id: hr, employee.id: employee, director.id: director}
 
 
 def test_chat_contact_search_and_message_flow(monkeypatch):
@@ -158,24 +159,24 @@ def test_chat_contact_search_and_message_flow(monkeypatch):
     contacts = anyio.run(
         chat_service.list_chat_users,
         cast(AsyncSession, object()),
-        FakeChatUserRepository.users[2],
+        FakeChatUserRepository.users[UUID(int=2)],
         "resource",
     )
-    assert [user.id for user in contacts] == [1]
+    assert [user.id for user in contacts] == [UUID(int=1)]
 
     message = anyio.run(
         chat_service.send_message,
         cast(AsyncSession, object()),
-        FakeChatUserRepository.users[1],
-        MessageCreateRequest(receiver_id=2, message="Hello"),
+        FakeChatUserRepository.users[UUID(int=1)],
+        MessageCreateRequest(receiver_id=UUID(int=2), message="Hello"),
     )
     assert message.message == "Hello"
 
     conversation = anyio.run(
         chat_service.get_conversation,
         cast(AsyncSession, object()),
-        FakeChatUserRepository.users[2],
-        1,
+        FakeChatUserRepository.users[UUID(int=2)],
+        UUID(int=1),
     )
     assert len(conversation.messages) == 1
     assert conversation.messages[0].seen is True
@@ -190,15 +191,15 @@ def test_chat_unseen_contacts(monkeypatch):
     anyio.run(
         chat_service.send_message,
         cast(AsyncSession, object()),
-        FakeChatUserRepository.users[1],
-        MessageCreateRequest(receiver_id=2, message="Ping"),
+        FakeChatUserRepository.users[UUID(int=1)],
+        MessageCreateRequest(receiver_id=UUID(int=2), message="Ping"),
     )
 
     unseen = anyio.run(
         chat_service.list_unseen_contacts,
         cast(AsyncSession, object()),
-        FakeChatUserRepository.users[2],
+        FakeChatUserRepository.users[UUID(int=2)],
     )
     assert len(unseen) == 1
-    assert unseen[0].user.id == 1
+    assert unseen[0].user.id == UUID(int=1)
     assert unseen[0].unseen_count == 1

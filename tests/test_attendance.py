@@ -1,6 +1,7 @@
 import anyio
 from datetime import UTC, date, datetime, time
 from typing import Literal, cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +34,12 @@ from app.services import attendance as attendance_service
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def list(self, include_superusers: bool = False, **kwargs):
@@ -112,7 +113,7 @@ class FakeAttendanceRecordRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_for_user_range(self, user_id: int, start: datetime, end: datetime):
+    async def list_for_user_range(self, user_id: UUID, start: datetime, end: datetime):
         return [
             record
             for record in self.records.values()
@@ -171,7 +172,7 @@ class FakeEmployeeShiftAssignmentRepository:
             and schedule.date.month == month
         ]
 
-    async def list_for_user_month(self, user_id: int, year: int, month: int):
+    async def list_for_user_month(self, user_id: UUID, year: int, month: int):
         return [
             schedule
             for schedule in self.schedules.values()
@@ -183,7 +184,7 @@ class FakeEmployeeShiftAssignmentRepository:
     async def get_by_id(self, schedule_id: int):
         return self.schedules.get(schedule_id)
 
-    async def get_by_user_date(self, user_id: int, selected_date: date):
+    async def get_by_user_date(self, user_id: UUID, selected_date: date):
         for schedule in self.schedules.values():
             if schedule.user_id == user_id and schedule.date == selected_date:
                 return schedule
@@ -282,14 +283,14 @@ class FakeOvertimeRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_for_user(self, user_id: int):
+    async def list_for_user(self, user_id: UUID):
         return [
             overtime
             for overtime in self.overtime_requests.values()
             if overtime.user_id == user_id
         ]
 
-    async def list_for_approver(self, approver_id: int):
+    async def list_for_approver(self, approver_id: UUID):
         return [
             overtime
             for overtime in self.overtime_requests.values()
@@ -355,14 +356,14 @@ class FakeShiftSwapRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_for_user(self, user_id: int):
+    async def list_for_user(self, user_id: UUID):
         return [
             swap
             for swap in self.swaps.values()
             if swap.requested_by_id == user_id or swap.requested_for_id == user_id
         ]
 
-    async def list_for_approver(self, approver_id: int):
+    async def list_for_approver(self, approver_id: UUID):
         return [swap for swap in self.swaps.values() if swap.approver_id == approver_id]
 
     async def get_by_id(self, swap_id: int):
@@ -447,7 +448,7 @@ async def _create_overtime(payload: OvertimeRequestCreateRequest):
     )
 
 
-async def _respond_overtime(overtime_id: int, approver_id: int, payload: OvertimeRequestRespondRequest):
+async def _respond_overtime(overtime_id: int, approver_id: UUID, payload: OvertimeRequestRespondRequest):
     return await attendance_service.respond_to_overtime_request(
         session=cast(AsyncSession, object()),
         overtime_id=overtime_id,
@@ -463,7 +464,7 @@ async def _create_swap(payload: ShiftSwapRequestCreateRequest):
     )
 
 
-async def _respond_swap(swap_id: int, approver_id: int, payload: ShiftSwapRequestRespondRequest):
+async def _respond_swap(swap_id: int, approver_id: UUID, payload: ShiftSwapRequestRespondRequest):
     return await attendance_service.respond_to_shift_swap_request(
         session=cast(AsyncSession, object()),
         swap_id=swap_id,
@@ -472,7 +473,7 @@ async def _respond_swap(swap_id: int, approver_id: int, payload: ShiftSwapReques
     )
 
 
-async def _summary(user_id: int, year: int, month: int) -> AttendanceSummaryRead:
+async def _summary(user_id: UUID, year: int, month: int) -> AttendanceSummaryRead:
     return await attendance_service.get_attendance_summary(
         session=cast(AsyncSession, object()),
         user_id=user_id,
@@ -481,7 +482,7 @@ async def _summary(user_id: int, year: int, month: int) -> AttendanceSummaryRead
     )
 
 
-async def _create_employee_shift_assignment(date_value: date, user_id: int, shift_id: int):
+async def _create_employee_shift_assignment(date_value: date, user_id: UUID, shift_id: int):
     return await attendance_service.create_employee_shift_assignment(
         session=cast(AsyncSession, object()),
         payload=attendance_service.EmployeeShiftAssignmentCreateRequest(
@@ -492,7 +493,7 @@ async def _create_employee_shift_assignment(date_value: date, user_id: int, shif
     )
 
 
-async def _copy_previous_month_shift_assignments(user_id: int, year: int, month: int):
+async def _copy_previous_month_shift_assignments(user_id: UUID, year: int, month: int):
     return await attendance_service.copy_previous_month_employee_shift_assignments(
         session=cast(AsyncSession, object()),
         payload=attendance_service.EmployeeShiftAssignmentCopyPreviousMonthRequest(
@@ -504,7 +505,7 @@ async def _copy_previous_month_shift_assignments(user_id: int, year: int, month:
 
 
 async def _generate_month_shift_assignments(
-    user_id: int, year: int, month: int, shift_id: int | None = None
+    user_id: UUID, year: int, month: int, shift_id: int | None = None
 ):
     return await attendance_service.generate_month_employee_shift_assignments(
         session=cast(AsyncSession, object()),
@@ -551,7 +552,7 @@ def _make_department(department_id: int, name: str = "Accounting"):
     return department
 
 
-def _make_user(user_id: int, department: Department | None = None, biometric_uid: int | None = None):
+def _make_user(user_id: UUID, department: Department | None = None, biometric_uid: int | None = None):
     user = User(
         id=user_id,
         email=f"user{user_id}@example.com",
@@ -636,7 +637,7 @@ def test_update_department_schedule_sets_workweek_and_shifts(monkeypatch):
 
 def test_create_employee_shift_assignment_rejects_duplicate(monkeypatch):
     department = _make_department(1)
-    user = _make_user(1, department=department)
+    user = _make_user(UUID(int=1), department=department)
     shift = _make_shift(1)
     existing = EmployeeShiftAssignment(
         id=1,
@@ -671,7 +672,7 @@ def test_create_employee_shift_assignment_rejects_duplicate(monkeypatch):
 
 def test_copy_previous_month_shift_assignments(monkeypatch):
     department = _make_department(1)
-    user = _make_user(1, department=department)
+    user = _make_user(UUID(int=1), department=department)
     source_shift_one = _make_shift(1, "Morning")
     source_shift_two = _make_shift(2, "Evening")
     target_shift = _make_shift(3, "Night")
@@ -748,7 +749,7 @@ def test_generate_month_shift_assignments_from_department_policy(monkeypatch):
     primary_shift = _make_shift(1, "Morning")
     secondary_shift = _make_shift(2, "Night")
     department.shift_templates = [primary_shift, secondary_shift]
-    user = _make_user(1, department=department)
+    user = _make_user(UUID(int=1), department=department)
     existing_assignment = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 3),
@@ -794,7 +795,7 @@ def test_generate_month_shift_assignments_from_department_policy(monkeypatch):
 
 
 def test_sync_device_attendance_uses_biometric_uid(monkeypatch):
-    user = _make_user(1, biometric_uid=77)
+    user = _make_user(UUID(int=1), biometric_uid=77)
     FakeUserRepository.users = {user.id: user}
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
@@ -807,13 +808,13 @@ def test_sync_device_attendance_uses_biometric_uid(monkeypatch):
         "event-1",
     )
 
-    assert response.user_id == 1
+    assert response.user_id == UUID(int=1)
     assert response.device_user_id == 77
     assert response.raw_event_id == "event-1"
 
 
 def test_create_and_update_attendance_record(monkeypatch):
-    user = _make_user(1)
+    user = _make_user(UUID(int=1))
     FakeUserRepository.users = {user.id: user}
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
@@ -821,7 +822,7 @@ def test_create_and_update_attendance_record(monkeypatch):
     created = anyio.run(
         _create_attendance_record,
         AttendanceRecordCreateRequest(
-            user_id=1,
+            user_id=UUID(int=1),
             device_user_id=5,
             timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
             punch="IN",
@@ -841,7 +842,7 @@ def test_create_and_update_attendance_record(monkeypatch):
 
 
 def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
-    user = _make_user(1)
+    user = _make_user(UUID(int=1))
     FakeUserRepository.users = {user.id: user}
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
@@ -849,7 +850,7 @@ def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
     created = anyio.run(
         _create_attendance_record,
         AttendanceRecordCreateRequest(
-            user_id=1,
+            user_id=UUID(int=1),
             device_user_id=5,
             raw_event_id="raw-duplicate-check",
             timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
@@ -862,7 +863,7 @@ def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
         anyio.run(
             _create_attendance_record,
             AttendanceRecordCreateRequest(
-                user_id=1,
+                user_id=UUID(int=1),
                 device_user_id=5,
                 raw_event_id="raw-duplicate-check",
                 timestamp=datetime(2026, 3, 24, 8, 1, tzinfo=UTC),
@@ -876,8 +877,8 @@ def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
 
 
 def test_create_holiday_and_overtime_flow(monkeypatch):
-    user = _make_user(1)
-    approver = _make_user(2)
+    user = _make_user(UUID(int=1))
+    approver = _make_user(UUID(int=2))
     FakeUserRepository.users = {user.id: user, approver.id: approver}
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
@@ -891,24 +892,24 @@ def test_create_holiday_and_overtime_flow(monkeypatch):
 
     overtime = anyio.run(
         _create_overtime,
-        OvertimeRequestCreateRequest(user_id=1, approver_id=2, info="Support", date=date(2026, 3, 24)),
+        OvertimeRequestCreateRequest(user_id=UUID(int=1), approver_id=UUID(int=2), info="Support", date=date(2026, 3, 24)),
     )
     assert overtime.id == 1
 
     approved = anyio.run(
         _respond_overtime,
         1,
-        2,
+        UUID(int=2),
         OvertimeRequestRespondRequest(response="APPROVE"),
     )
     assert approved.status == OvertimeRequest.Status.APPROVED.value
 
 
 def test_shift_swap_flow(monkeypatch):
-    requester = _make_user(1)
-    target = _make_user(2)
-    approver = _make_user(3)
-    FakeUserRepository.users = {1: requester, 2: target, 3: approver}
+    requester = _make_user(UUID(int=1))
+    target = _make_user(UUID(int=2))
+    approver = _make_user(UUID(int=3))
+    FakeUserRepository.users = {requester.id: requester, target.id: target, approver.id: approver}
     schedule_one = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 24),
@@ -939,11 +940,11 @@ def test_shift_swap_flow(monkeypatch):
     created = anyio.run(
         _create_swap,
         ShiftSwapRequestCreateRequest(
-            requested_by_id=1,
-            requested_for_id=2,
+            requested_by_id=UUID(int=1),
+            requested_for_id=UUID(int=2),
             current_schedule_id=1,
             requested_schedule_id=2,
-            approver_id=3,
+            approver_id=UUID(int=3),
             info="Swap request",
         ),
     )
@@ -952,7 +953,7 @@ def test_shift_swap_flow(monkeypatch):
     approved = anyio.run(
         _respond_swap,
         1,
-        3,
+        UUID(int=3),
         ShiftSwapRequestRespondRequest(response="APPROVE"),
     )
     assert approved.status == ShiftSwapRequest.Status.APPROVED.value
@@ -960,11 +961,11 @@ def test_shift_swap_flow(monkeypatch):
 
 def test_attendance_summary_groups_days(monkeypatch):
     department = _make_department(1)
-    user = _make_user(1, department=department)
+    user = _make_user(UUID(int=1), department=department)
     shift = _make_shift(1)
     record = AttendanceRecord(
         id=1,
-        user_id=1,
+        user_id=UUID(int=1),
         device_user_id=77,
         timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
         punch="IN",
@@ -1003,8 +1004,8 @@ def test_attendance_summary_groups_days(monkeypatch):
     )
     overtime = OvertimeRequest(
         id=1,
-        user_id=1,
-        approver_id=2,
+        user_id=UUID(int=1),
+        approver_id=UUID(int=2),
         info="Support",
         date=date(2026, 3, 24),
         status=OvertimeRequest.Status.APPROVED.value,
@@ -1028,7 +1029,7 @@ def test_attendance_summary_groups_days(monkeypatch):
     monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
 
-    response = anyio.run(_summary, 1, 2026, 3)
+    response = anyio.run(_summary, UUID(int=1), 2026, 3)
 
     assert isinstance(response, AttendanceSummaryRead)
     assert len(response.days) == 31

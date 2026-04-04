@@ -1,5 +1,6 @@
 import anyio
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,7 @@ class FakeNotificationRepository:
 
     async def list_for_recipient(
         self,
-        recipient_id: int,
+        recipient_id: UUID,
         *,
         limit: int = 50,
         offset: int = 0,
@@ -35,7 +36,7 @@ class FakeNotificationRepository:
             items = [notification for notification in items if not notification.read]
         return items[offset : offset + limit]
 
-    async def get_for_recipient(self, notification_id: int, recipient_id: int):
+    async def get_for_recipient(self, notification_id: int, recipient_id: UUID):
         notification = self.notifications.get(notification_id)
         if notification and notification.recipient_id == recipient_id:
             return notification
@@ -54,7 +55,7 @@ class FakeNotificationRepository:
         self.notifications[notification.id] = notification
         return notification
 
-    async def mark_all_read_for_recipient(self, recipient_id: int):
+    async def mark_all_read_for_recipient(self, recipient_id: UUID):
         updated_count = 0
         for notification in self.notifications.values():
             if notification.recipient_id == recipient_id and not notification.read:
@@ -63,7 +64,7 @@ class FakeNotificationRepository:
                 updated_count += 1
         return updated_count
 
-    async def count_unread_for_recipient(self, recipient_id: int):
+    async def count_unread_for_recipient(self, recipient_id: UUID):
         return len(
             [
                 notification
@@ -74,7 +75,7 @@ class FakeNotificationRepository:
 
 
 async def _list_notifications(
-    recipient_id: int,
+    recipient_id: UUID,
     *,
     limit: int = 50,
     offset: int = 0,
@@ -89,7 +90,7 @@ async def _list_notifications(
     )
 
 
-async def _mark_read(notification_id: int, recipient_id: int):
+async def _mark_read(notification_id: int, recipient_id: UUID):
     return await notification_service.mark_notification_read(
         session=cast(AsyncSession, object()),
         notification_id=notification_id,
@@ -97,26 +98,26 @@ async def _mark_read(notification_id: int, recipient_id: int):
     )
 
 
-async def _mark_all_read(recipient_id: int):
+async def _mark_all_read(recipient_id: UUID):
     return await notification_service.mark_all_notifications_read(
         session=cast(AsyncSession, object()),
         recipient_id=recipient_id,
     )
 
 
-async def _count_unread(recipient_id: int):
+async def _count_unread(recipient_id: UUID):
     return await notification_service.count_unread_notifications(
         session=cast(AsyncSession, object()),
         recipient_id=recipient_id,
     )
 
 
-async def _create_notification(recipient_id: int, content: str):
+async def _create_notification(recipient_id: UUID, content: str):
     return await notification_service.create_notification(
         session=cast(AsyncSession, object()),
         recipient_id=recipient_id,
         content=content,
-        sender_id=99,
+        sender_id=UUID(int=99),
         url="/test",
     )
 
@@ -126,7 +127,7 @@ def setup_function():
     FakeNotificationRepository.next_id = 1
 
 
-def _make_notification(notification_id: int, recipient_id: int, read: bool = False):
+def _make_notification(notification_id: int, recipient_id: UUID, read: bool = False):
     notification = Notification(
         id=notification_id,
         recipient_id=recipient_id,
@@ -141,9 +142,9 @@ def _make_notification(notification_id: int, recipient_id: int, read: bool = Fal
 
 
 def test_list_notifications_returns_only_recipient_notifications(monkeypatch):
-    first = _make_notification(1, 10, read=False)
-    second = _make_notification(2, 10, read=True)
-    third = _make_notification(3, 20, read=False)
+    first = _make_notification(1, UUID(int=10), read=False)
+    second = _make_notification(2, UUID(int=10), read=True)
+    third = _make_notification(3, UUID(int=20), read=False)
     FakeNotificationRepository.notifications = {
         first.id: first,
         second.id: second,
@@ -152,18 +153,18 @@ def test_list_notifications_returns_only_recipient_notifications(monkeypatch):
 
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
-    response = anyio.run(_list_notifications, 10)
+    response = anyio.run(_list_notifications, UUID(int=10))
 
     assert [notification.id for notification in response] == [1, 2]
 
 
 def test_mark_notification_read_marks_notification(monkeypatch):
-    notification = _make_notification(1, 10, read=False)
+    notification = _make_notification(1, UUID(int=10), read=False)
     FakeNotificationRepository.notifications = {notification.id: notification}
 
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
-    response = anyio.run(_mark_read, 1, 10)
+    response = anyio.run(_mark_read, 1, UUID(int=10))
 
     assert response.read is True
 
@@ -172,7 +173,7 @@ def test_mark_notification_read_raises_for_missing_notification(monkeypatch):
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
     try:
-        anyio.run(_mark_read, 1, 10)
+        anyio.run(_mark_read, 1, UUID(int=10))
     except NotFoundError as exc:
         assert exc.detail == "Notification not found."
     else:
@@ -180,9 +181,9 @@ def test_mark_notification_read_raises_for_missing_notification(monkeypatch):
 
 
 def test_mark_all_read_marks_unread_notifications(monkeypatch):
-    first = _make_notification(1, 10, read=False)
-    second = _make_notification(2, 10, read=True)
-    third = _make_notification(3, 10, read=False)
+    first = _make_notification(1, UUID(int=10), read=False)
+    second = _make_notification(2, UUID(int=10), read=True)
+    third = _make_notification(3, UUID(int=10), read=False)
     FakeNotificationRepository.notifications = {
         first.id: first,
         second.id: second,
@@ -191,7 +192,7 @@ def test_mark_all_read_marks_unread_notifications(monkeypatch):
 
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
-    updated_count = anyio.run(_mark_all_read, 10)
+    updated_count = anyio.run(_mark_all_read, UUID(int=10))
 
     assert updated_count == 2
     assert FakeNotificationRepository.notifications[1].read is True
@@ -199,9 +200,9 @@ def test_mark_all_read_marks_unread_notifications(monkeypatch):
 
 
 def test_count_unread_returns_total(monkeypatch):
-    first = _make_notification(1, 10, read=False)
-    second = _make_notification(2, 10, read=True)
-    third = _make_notification(3, 10, read=False)
+    first = _make_notification(1, UUID(int=10), read=False)
+    second = _make_notification(2, UUID(int=10), read=True)
+    third = _make_notification(3, UUID(int=10), read=False)
     FakeNotificationRepository.notifications = {
         first.id: first,
         second.id: second,
@@ -210,7 +211,7 @@ def test_count_unread_returns_total(monkeypatch):
 
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
-    unread_count = anyio.run(_count_unread, 10)
+    unread_count = anyio.run(_count_unread, UUID(int=10))
 
     assert unread_count == 2
 
@@ -218,9 +219,9 @@ def test_count_unread_returns_total(monkeypatch):
 def test_create_notification_persists_record(monkeypatch):
     monkeypatch.setattr(notification_service, "NotificationRepository", FakeNotificationRepository)
 
-    created = anyio.run(_create_notification, 10, "Hello")
+    created = anyio.run(_create_notification, UUID(int=10), "Hello")
 
     assert created.id == 1
-    assert created.recipient_id == 10
+    assert created.recipient_id == UUID(int=10)
     assert created.content == "Hello"
     assert created.read is False

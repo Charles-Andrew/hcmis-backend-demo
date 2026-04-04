@@ -1,6 +1,7 @@
 import anyio
 import pytest
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,12 +40,12 @@ from app.services import performance as performance_service
 
 
 class FakeUserRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
 
     def __init__(self, session):
         self.session = session
 
-    async def get_by_id(self, user_id: int):
+    async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
 
 
@@ -118,7 +119,7 @@ class FakeUserEvaluationRepository:
     async def get_by_id(self, user_evaluation_id: int):
         return self.items.get(user_evaluation_id)
 
-    async def get_by_identity(self, evaluatee_id: int, questionnaire_id: int, quarter: str, year: int):
+    async def get_by_identity(self, evaluatee_id: UUID, questionnaire_id: int, quarter: str, year: int):
         for item in self.items.values():
             if (
                 item.evaluatee_id == evaluatee_id
@@ -169,7 +170,7 @@ class FakeEvaluationRepository:
     async def get_by_id(self, evaluation_id: int):
         return self.items.get(evaluation_id)
 
-    async def get_by_identity(self, user_evaluation_id: int, evaluator_id: int):
+    async def get_by_identity(self, user_evaluation_id: int, evaluator_id: UUID):
         for item in self.items.values():
             if item.user_evaluation_id == user_evaluation_id and item.evaluator_id == evaluator_id:
                 return item
@@ -285,7 +286,7 @@ class FakePollRepository:
                 self.votes.pop(vote_id, None)
         self.choices.pop(item.id, None)
 
-    async def list_votes_for_user(self, poll_id: int, user_id: int):
+    async def list_votes_for_user(self, poll_id: int, user_id: UUID):
         poll = self.polls[poll_id]
         return [vote for vote in poll.votes if vote.user_id == user_id]
 
@@ -312,7 +313,9 @@ class FakeSharedResourceRepository:
     def __init__(self, session):
         self.session = session
 
-    async def list_for_user(self, user_id: int, uploader_id=None, search=None):
+    async def list_for_user(
+        self, user_id: UUID, uploader_id: UUID | None = None, search: str | None = None
+    ):
         items = []
         for item in self.items.values():
             shared_user_ids = {share.user_id for share in item.shares}
@@ -346,7 +349,7 @@ class FakeSharedResourceRepository:
     async def delete(self, item: SharedResource):
         self.items.pop(item.id, None)
 
-    async def get_share(self, resource_id: int, user_id: int):
+    async def get_share(self, resource_id: int, user_id: UUID):
         item = self.items.get(resource_id)
         if item is None:
             return None
@@ -355,7 +358,7 @@ class FakeSharedResourceRepository:
                 return share
         return None
 
-    async def add_share(self, resource_id: int, user_id: int):
+    async def add_share(self, resource_id: int, user_id: UUID):
         item = self.items[resource_id]
         share = SharedResourceShare(
             id=self.next_access_id,
@@ -371,7 +374,7 @@ class FakeSharedResourceRepository:
         item = self.items[share.resource_id]
         item.shares = [current for current in item.shares if current.id != share.id]
 
-    async def get_confidential_access(self, resource_id: int, user_id: int):
+    async def get_confidential_access(self, resource_id: int, user_id: UUID):
         item = self.items.get(resource_id)
         if item is None:
             return None
@@ -380,7 +383,7 @@ class FakeSharedResourceRepository:
                 return access
         return None
 
-    async def add_confidential_access(self, resource_id: int, user_id: int):
+    async def add_confidential_access(self, resource_id: int, user_id: UUID):
         item = self.items[resource_id]
         access = SharedResourceConfidentialAccess(
             id=self.next_access_id,
@@ -428,7 +431,7 @@ def _reset():
 def _seed():
     dept = Department(id=1, name="Operations", code="OPS", is_active=True, workweek=[])
     user = User(
-        id=1,
+        id=UUID(int=1),
         email="employee@example.com",
         password_hash="hashed",
         first_name="Employee",
@@ -442,7 +445,7 @@ def _seed():
     )
     user.department = dept
     peer = User(
-        id=2,
+        id=UUID(int=2),
         email="peer@example.com",
         password_hash="hashed",
         first_name="Peer",
@@ -455,8 +458,8 @@ def _seed():
         updated_at=utc_now(),
     )
     peer.department = dept
-    FakeUserRepository.users[1] = user
-    FakeUserRepository.users[2] = peer
+    FakeUserRepository.users[UUID(int=1)] = user
+    FakeUserRepository.users[UUID(int=2)] = peer
 
 
 def test_questionnaire_and_user_evaluation_flow(monkeypatch):
@@ -492,20 +495,20 @@ def test_questionnaire_and_user_evaluation_flow(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
         ),
     )
-    assert user_evaluation.evaluatee_id == 1
+    assert user_evaluation.evaluatee_id == UUID(int=1)
     assert user_evaluation.is_finalized is False
 
     anyio.run(
         performance_service.assign_user_evaluation_evaluator,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        EvaluationAssignmentRequest(evaluator_id=2),
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
     )
     finalized = anyio.run(
         performance_service.toggle_user_evaluation_finalized,
@@ -513,8 +516,8 @@ def test_questionnaire_and_user_evaluation_flow(monkeypatch):
         user_evaluation.id,
     )
     assert finalized.is_finalized is True
-    assert any(evaluation.evaluator_id == 1 for evaluation in finalized.evaluations)
-    assert any(evaluation.evaluator_id == 2 for evaluation in finalized.evaluations)
+    assert any(evaluation.evaluator_id == UUID(int=1) for evaluation in finalized.evaluations)
+    assert any(evaluation.evaluator_id == UUID(int=2) for evaluation in finalized.evaluations)
 
 
 def test_evaluation_summary_and_reset(monkeypatch):
@@ -548,7 +551,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -558,7 +561,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.assign_user_evaluation_evaluator,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        EvaluationAssignmentRequest(evaluator_id=2),
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
     )
     anyio.run(
         performance_service.toggle_user_evaluation_finalized,
@@ -570,7 +573,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.create_evaluation,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        2,
+        UUID(int=2),
         EvaluationCreateRequest(
             content_data=[
                 {
@@ -588,7 +591,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         cast(AsyncSession, object()),
         evaluation.id,
         EvaluationUpdateRequest(positive_feedback="Good", improvement_suggestion="Keep going"),
-        2,
+        UUID(int=2),
         False,
     )
     assert updated.positive_feedback == "Good"
@@ -597,7 +600,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.submit_evaluation,
         cast(AsyncSession, object()),
         evaluation.id,
-        2,
+        UUID(int=2),
         False,
     )
     assert submitted.date_submitted is not None
@@ -606,7 +609,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.get_evaluation_summary,
         cast(AsyncSession, object()),
         evaluation.id,
-        2,
+        UUID(int=2),
         False,
     )
     assert summary.answered_question_count == 2
@@ -618,7 +621,7 @@ def test_evaluation_summary_and_reset(monkeypatch):
         performance_service.reset_evaluation,
         cast(AsyncSession, object()),
         evaluation.id,
-        2,
+        UUID(int=2),
         False,
     )
     assert reset.date_submitted is None
@@ -633,9 +636,9 @@ def test_user_evaluation_enforces_employee_vs_administrator_questionnaire(monkey
     monkeypatch.setattr(performance_service, "EvaluationRepository", FakeEvaluationRepository)
     monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
 
-    employee_user = FakeUserRepository.users[1]
+    employee_user = FakeUserRepository.users[UUID(int=1)]
     employee_user.role = "EMP"
-    non_employee_user = FakeUserRepository.users[2]
+    non_employee_user = FakeUserRepository.users[UUID(int=2)]
     non_employee_user.role = "HR"
 
     employee_questionnaire = anyio.run(
@@ -720,7 +723,7 @@ def test_update_user_evaluation_enforces_questionnaire_role_match(monkeypatch):
     monkeypatch.setattr(performance_service, "EvaluationRepository", FakeEvaluationRepository)
     monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
 
-    employee_user = FakeUserRepository.users[1]
+    employee_user = FakeUserRepository.users[UUID(int=1)]
     employee_user.role = "EMP"
 
     employee_questionnaire = anyio.run(
@@ -773,7 +776,7 @@ def test_announcement_lifecycle_and_feed(monkeypatch):
     draft = anyio.run(
         performance_service.create_announcement,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         AnnouncementCreateRequest(
             title="System maintenance",
             summary="Night maintenance",
@@ -801,7 +804,7 @@ def test_announcement_lifecycle_and_feed(monkeypatch):
     feed = anyio.run(
         performance_service.list_feed,
         cast(AsyncSession, object()),
-        2,
+        UUID(int=2),
         None,
     )
     assert len(feed) == 1
@@ -819,7 +822,7 @@ def test_feed_includes_drafts_when_requested(monkeypatch):
     announcement = anyio.run(
         performance_service.create_announcement,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         AnnouncementCreateRequest(
             title="Draft announcement",
             summary="internal",
@@ -831,7 +834,7 @@ def test_feed_includes_drafts_when_requested(monkeypatch):
     poll = anyio.run(
         performance_service.create_poll,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         PollCreateRequest(
             question="Draft poll?",
             choices=[
@@ -845,7 +848,7 @@ def test_feed_includes_drafts_when_requested(monkeypatch):
     staff_feed = anyio.run(
         performance_service.list_feed,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         None,
         True,
     )
@@ -855,7 +858,7 @@ def test_feed_includes_drafts_when_requested(monkeypatch):
     non_staff_feed = anyio.run(
         performance_service.list_feed,
         cast(AsyncSession, object()),
-        2,
+        UUID(int=2),
         None,
         False,
     )
@@ -864,7 +867,7 @@ def test_feed_includes_drafts_when_requested(monkeypatch):
     archived_feed = anyio.run(
         performance_service.list_feed,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         None,
         True,
         True,
@@ -881,7 +884,7 @@ def test_unarchive_and_move_to_draft_workflow(monkeypatch):
     announcement = anyio.run(
         performance_service.create_announcement,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         AnnouncementCreateRequest(
             title="Release notes",
             summary="v1.2",
@@ -926,7 +929,7 @@ def test_unarchive_and_move_to_draft_workflow(monkeypatch):
     poll = anyio.run(
         performance_service.create_poll,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         PollCreateRequest(
             question="Deploy now?",
             choices=[
@@ -959,7 +962,7 @@ def test_unarchive_and_move_to_draft_workflow(monkeypatch):
     archived_feed = anyio.run(
         performance_service.list_feed,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         None,
         True,
         True,
@@ -983,7 +986,7 @@ def test_poll_single_choice_vote_replaces_previous(monkeypatch):
     poll = anyio.run(
         performance_service.create_poll,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         PollCreateRequest(
             question="Where should we host the team event?",
             choices=[
@@ -1008,7 +1011,7 @@ def test_poll_single_choice_vote_replaces_previous(monkeypatch):
         performance_service.submit_poll_vote,
         cast(AsyncSession, object()),
         poll.id,
-        2,
+        UUID(int=2),
         PollVoteSubmitRequest(choice_ids=[first_choice]),
     )
     assert voted.user_vote_choice_ids == [first_choice]
@@ -1017,7 +1020,7 @@ def test_poll_single_choice_vote_replaces_previous(monkeypatch):
         performance_service.submit_poll_vote,
         cast(AsyncSession, object()),
         poll.id,
-        2,
+        UUID(int=2),
         PollVoteSubmitRequest(choice_ids=[second_choice]),
     )
     assert voted_again.user_vote_choice_ids == [second_choice]
@@ -1030,7 +1033,7 @@ def test_poll_single_choice_vote_replaces_previous(monkeypatch):
             performance_service.submit_poll_vote,
             cast(AsyncSession, object()),
             poll.id,
-            2,
+            UUID(int=2),
             PollVoteSubmitRequest(choice_ids=[first_choice, second_choice]),
         )
         assert False, "Expected a ConflictError"
@@ -1047,7 +1050,7 @@ def test_shared_resource_confidential_visibility(monkeypatch):
     created = anyio.run(
         performance_service.create_shared_resource,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         SharedResourceCreateRequest(
             resource_name="HR policy",
             description="policy link",
@@ -1055,18 +1058,18 @@ def test_shared_resource_confidential_visibility(monkeypatch):
             original_filename="policy.pdf",
             content_type="application/pdf",
             size_bytes=1234,
-            shared_user_ids=[2],
+            shared_user_ids=[UUID(int=2)],
             is_confidential=True,
-            confidential_access_user_ids=[2],
+            confidential_access_user_ids=[UUID(int=2)],
         ),
     )
-    assert created.shared_user_ids == [2]
-    assert created.confidential_access_user_ids == [2]
+    assert created.shared_user_ids == [UUID(int=2)]
+    assert created.confidential_access_user_ids == [UUID(int=2)]
 
     visible_to_peer = anyio.run(
         performance_service.list_shared_resources,
         cast(AsyncSession, object()),
-        2,
+        UUID(int=2),
         None,
         None,
     )
@@ -1076,14 +1079,14 @@ def test_shared_resource_confidential_visibility(monkeypatch):
         performance_service.remove_shared_resource_confidential_access,
         cast(AsyncSession, object()),
         created.id,
-        2,
-        1,
+        UUID(int=2),
+        UUID(int=1),
         False,
     )
     hidden_from_peer = anyio.run(
         performance_service.list_shared_resources,
         cast(AsyncSession, object()),
-        2,
+        UUID(int=2),
         None,
         None,
     )
@@ -1100,7 +1103,7 @@ def test_shared_resource_confidential_requires_shared_user(monkeypatch):
         anyio.run(
             performance_service.create_shared_resource,
             cast(AsyncSession, object()),
-            1,
+            UUID(int=1),
             SharedResourceCreateRequest(
                 resource_name="Compensation sheet",
                 storage_key="1/comp-sheet.xlsx",
@@ -1108,7 +1111,7 @@ def test_shared_resource_confidential_requires_shared_user(monkeypatch):
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 size_bytes=4096,
                 is_confidential=True,
-                confidential_access_user_ids=[2],
+                confidential_access_user_ids=[UUID(int=2)],
             ),
         )
         assert False, "Expected a ConflictError"
@@ -1125,14 +1128,14 @@ def test_shared_resource_update_denied_for_non_owner(monkeypatch):
     created = anyio.run(
         performance_service.create_shared_resource,
         cast(AsyncSession, object()),
-        1,
+        UUID(int=1),
         SharedResourceCreateRequest(
             resource_name="Onboarding",
             storage_key="1/onboarding.docx",
             original_filename="onboarding.docx",
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             size_bytes=2048,
-            shared_user_ids=[2],
+            shared_user_ids=[UUID(int=2)],
         ),
     )
 
@@ -1142,7 +1145,7 @@ def test_shared_resource_update_denied_for_non_owner(monkeypatch):
             cast(AsyncSession, object()),
             created.id,
             SharedResourceUpdateRequest(resource_name="Renamed"),
-            2,
+            UUID(int=2),
             False,
         )
         assert False, "Expected a PermissionDeniedError"
@@ -1171,7 +1174,7 @@ def test_finalize_requires_peer_assignment(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -1214,7 +1217,7 @@ def test_submit_requires_complete_peer_feedback(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -1224,7 +1227,7 @@ def test_submit_requires_complete_peer_feedback(monkeypatch):
         performance_service.assign_user_evaluation_evaluator,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        EvaluationAssignmentRequest(evaluator_id=2),
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
     )
     anyio.run(
         performance_service.toggle_user_evaluation_finalized,
@@ -1235,7 +1238,7 @@ def test_submit_requires_complete_peer_feedback(monkeypatch):
         performance_service.create_evaluation,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        2,
+        UUID(int=2),
         EvaluationCreateRequest(
             content_data=[
                 {
@@ -1251,7 +1254,7 @@ def test_submit_requires_complete_peer_feedback(monkeypatch):
             performance_service.submit_evaluation,
             cast(AsyncSession, object()),
             peer_evaluation.id,
-            2,
+            UUID(int=2),
             False,
         )
         assert False, "Expected a ConflictError"
@@ -1280,7 +1283,7 @@ def test_update_evaluation_denied_for_non_owner(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -1290,7 +1293,7 @@ def test_update_evaluation_denied_for_non_owner(monkeypatch):
         performance_service.assign_user_evaluation_evaluator,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        EvaluationAssignmentRequest(evaluator_id=2),
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
     )
     anyio.run(
         performance_service.toggle_user_evaluation_finalized,
@@ -1301,7 +1304,7 @@ def test_update_evaluation_denied_for_non_owner(monkeypatch):
         performance_service.create_evaluation,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        2,
+        UUID(int=2),
         EvaluationCreateRequest(),
     )
 
@@ -1311,7 +1314,7 @@ def test_update_evaluation_denied_for_non_owner(monkeypatch):
             cast(AsyncSession, object()),
             created.id,
             EvaluationUpdateRequest(positive_feedback="x"),
-            1,
+            UUID(int=1),
             False,
         )
         assert False, "Expected a PermissionDeniedError"
@@ -1340,7 +1343,7 @@ def test_non_staff_cannot_create_unassigned_evaluation(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -1351,7 +1354,7 @@ def test_non_staff_cannot_create_unassigned_evaluation(monkeypatch):
             performance_service.create_evaluation,
             cast(AsyncSession, object()),
             user_evaluation.id,
-            2,
+            UUID(int=2),
             EvaluationCreateRequest(),
             False,
         )
@@ -1385,7 +1388,7 @@ def test_aggregate_summary_requires_self_submission_for_evaluatee(monkeypatch):
         performance_service.create_user_evaluation,
         cast(AsyncSession, object()),
         UserEvaluationCreateRequest(
-            evaluatee_id=1,
+            evaluatee_id=UUID(int=1),
             questionnaire_id=questionnaire.id,
             quarter="FQ",
             year=2026,
@@ -1395,7 +1398,7 @@ def test_aggregate_summary_requires_self_submission_for_evaluatee(monkeypatch):
         performance_service.assign_user_evaluation_evaluator,
         cast(AsyncSession, object()),
         user_evaluation.id,
-        EvaluationAssignmentRequest(evaluator_id=2),
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
     )
     anyio.run(
         performance_service.toggle_user_evaluation_finalized,
@@ -1408,7 +1411,7 @@ def test_aggregate_summary_requires_self_submission_for_evaluatee(monkeypatch):
             performance_service.get_user_evaluation_aggregate_summary,
             cast(AsyncSession, object()),
             user_evaluation.id,
-            1,
+            UUID(int=1),
             False,
         )
         assert False, "Expected a PermissionDeniedError"
