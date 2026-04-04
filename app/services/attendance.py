@@ -395,6 +395,10 @@ async def create_attendance_record(
     if user is None:
         raise NotFoundError("User not found.")
     repository = AttendanceRecordRepository(session)
+    if payload.raw_event_id:
+        by_raw_event = await repository.get_by_raw_event_id(payload.raw_event_id)
+        if by_raw_event is not None:
+            raise ConflictError("Attendance record already exists.")
     duplicate = await repository.get_duplicate(
         payload.user_id, _ensure_aware(payload.timestamp), payload.punch
     )
@@ -403,6 +407,7 @@ async def create_attendance_record(
     record = AttendanceRecord(
         user_id=payload.user_id,
         device_user_id=payload.device_user_id,
+        raw_event_id=payload.raw_event_id,
         timestamp=_ensure_aware(payload.timestamp),
         punch=payload.punch,
     )
@@ -414,6 +419,7 @@ async def sync_device_attendance(
     device_user_id: int,
     timestamp: datetime,
     punch: Literal["IN", "OUT"],
+    raw_event_id: str | None = None,
 ) -> AttendanceRecord:
     user_repository = UserRepository(session)
     users = await user_repository.list(include_superusers=True)
@@ -425,6 +431,7 @@ async def sync_device_attendance(
         AttendanceRecordCreateRequest(
             user_id=user.id,
             device_user_id=device_user_id,
+            raw_event_id=raw_event_id,
             timestamp=timestamp,
             punch=punch,
         ),

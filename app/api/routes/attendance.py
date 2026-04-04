@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from app.api.deps import (
     require_staff_user,
 )
 from app.core.capabilities import is_staff_user
+from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.models.attendance import (
     AttendanceRecord,
@@ -222,12 +224,30 @@ def _bridge_punch_to_attendance(punch: int | None) -> Literal["IN", "OUT"]:
     return "IN"
 
 
+def _bridge_device_timezone() -> ZoneInfo:
+    timezone_name = settings.bridge_device_timezone.strip() or "Asia/Manila"
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Invalid BRIDGE_DEVICE_TIMEZONE: {timezone_name}",
+        ) from exc
+
+
+def _normalize_bridge_timestamp(value: datetime, *, device_timezone: ZoneInfo) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=device_timezone).astimezone(UTC)
+    return value.astimezone(UTC)
+
+
 @router.post("/bridge/logs", response_model=BridgeLogsResponse)
 async def post_bridge_logs(
     payload: BridgeLogsRequest,
     session: AsyncSession = Depends(get_db_session),
     _: None = Depends(require_bridge_agent),
 ) -> BridgeLogsResponse:
+    device_timezone = _bridge_device_timezone()
     accepted = 0
     duplicates = 0
     unknown_users = 0
@@ -241,8 +261,12 @@ async def post_bridge_logs(
             await sync_device_attendance(
                 session,
                 device_user_id=int(device_user_id_raw),
-                timestamp=event.timestamp,
+                timestamp=_normalize_bridge_timestamp(
+                    event.timestamp,
+                    device_timezone=device_timezone,
+                ),
                 punch=_bridge_punch_to_attendance(event.punch),
+                raw_event_id=event.raw_event_id,
             )
             accepted += 1
         except ConflictError:
@@ -724,5 +748,13 @@ async def post_device_cdata(
     punch: Literal["IN", "OUT"] = Query(...),
     session: AsyncSession = Depends(get_db_session),
 ) -> str:
-    await sync_device_attendance(session, device_user_id, timestamp, punch)
+    await sync_device_attendance(
+        session,
+        device_user_id,
+        _normalize_bridge_timestamp(
+            timestamp,
+            device_timezone=_bridge_device_timezone(),
+        ),
+        punch,
+    )
     return "OK"

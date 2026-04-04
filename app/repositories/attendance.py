@@ -102,6 +102,12 @@ class AttendanceRecordRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_raw_event_id(self, raw_event_id: str) -> AttendanceRecord | None:
+        result = await self.session.execute(
+            select(AttendanceRecord).where(AttendanceRecord.raw_event_id == raw_event_id)
+        )
+        return result.scalar_one_or_none()
+
     async def create(self, record: AttendanceRecord) -> AttendanceRecord:
         self.session.add(record)
         await self.session.commit()

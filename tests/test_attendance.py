@@ -132,6 +132,12 @@ class FakeAttendanceRecordRepository:
                 return record
         return None
 
+    async def get_by_raw_event_id(self, raw_event_id: str):
+        for record in self.records.values():
+            if record.raw_event_id == raw_event_id:
+                return record
+        return None
+
     async def create(self, record: AttendanceRecord):
         record.id = self.next_id
         self.next_id += 1
@@ -401,12 +407,14 @@ async def _sync_device_attendance(
     device_user_id: int,
     timestamp: datetime,
     punch: Literal["IN", "OUT"],
+    raw_event_id: str | None = None,
 ):
     return await attendance_service.sync_device_attendance(
         session=cast(AsyncSession, object()),
         device_user_id=device_user_id,
         timestamp=timestamp,
         punch=punch,
+        raw_event_id=raw_event_id,
     )
 
 
@@ -796,10 +804,12 @@ def test_sync_device_attendance_uses_biometric_uid(monkeypatch):
         77,
         datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
         "IN",
+        "event-1",
     )
 
     assert response.user_id == 1
     assert response.device_user_id == 77
+    assert response.raw_event_id == "event-1"
 
 
 def test_create_and_update_attendance_record(monkeypatch):
@@ -828,6 +838,41 @@ def test_create_and_update_attendance_record(monkeypatch):
         ),
     )
     assert updated.punch == "OUT"
+
+
+def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
+    user = _make_user(1)
+    FakeUserRepository.users = {user.id: user}
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
+
+    created = anyio.run(
+        _create_attendance_record,
+        AttendanceRecordCreateRequest(
+            user_id=1,
+            device_user_id=5,
+            raw_event_id="raw-duplicate-check",
+            timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
+            punch="IN",
+        ),
+    )
+    assert created.raw_event_id == "raw-duplicate-check"
+
+    try:
+        anyio.run(
+            _create_attendance_record,
+            AttendanceRecordCreateRequest(
+                user_id=1,
+                device_user_id=5,
+                raw_event_id="raw-duplicate-check",
+                timestamp=datetime(2026, 3, 24, 8, 1, tzinfo=UTC),
+                punch="OUT",
+            ),
+        )
+    except ConflictError:
+        pass
+    else:
+        raise AssertionError("Expected ConflictError")
 
 
 def test_create_holiday_and_overtime_flow(monkeypatch):

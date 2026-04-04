@@ -47,6 +47,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="BRIDGE_AGENT_KEY",
     )
+    bridge_device_timezone: str = Field(
+        default="Asia/Manila",
+        validation_alias="BRIDGE_DEVICE_TIMEZONE",
+    )
 
 
 @lru_cache

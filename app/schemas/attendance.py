@@ -56,6 +56,7 @@ class AttendanceRecordRead(BaseModel):
     id: int
     user_id: int
     device_user_id: int | None = None
+    raw_event_id: str | None = None
     timestamp: datetime
     punch: str
     created_at: datetime
@@ -67,6 +68,7 @@ class AttendanceRecordRead(BaseModel):
 class AttendanceRecordCreateRequest(BaseModel):
     user_id: int
     device_user_id: int | None = None
+    raw_event_id: str | None = None
     timestamp: datetime
     punch: Literal["IN", "OUT"]
 

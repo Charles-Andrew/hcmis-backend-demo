@@ -164,6 +164,7 @@ class AttendanceRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     device_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    raw_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     punch: Mapped[str] = mapped_column(String(6), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
