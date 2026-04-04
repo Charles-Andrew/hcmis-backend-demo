@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import cast
+from uuid import UUID
 
 import anyio
 from httpx import ASGITransport, AsyncClient
@@ -24,7 +25,7 @@ class FakeUserRepository:
 
 
 def _make_user(
-    user_id: int,
+    user_id: UUID,
     first_name: str,
     last_name: str,
     biometric_uid: int | None,
@@ -77,9 +78,9 @@ def test_bridge_users_returns_biometric_mapped_users(monkeypatch):
     app.dependency_overrides[get_db_session] = _fake_db_session
     monkeypatch.setattr(attendance_routes, "UserRepository", FakeUserRepository)
     FakeUserRepository.users = [
-        _make_user(1, "Alice", "Anderson", biometric_uid=101, is_active=True),
-        _make_user(2, "Bob", "Brown", biometric_uid=None, is_active=True),
-        _make_user(3, "Cara", "Cole", biometric_uid=303, is_active=False),
+        _make_user(UUID(int=1), "Alice", "Anderson", biometric_uid=101, is_active=True),
+        _make_user(UUID(int=2), "Bob", "Brown", biometric_uid=None, is_active=True),
+        _make_user(UUID(int=3), "Cara", "Cole", biometric_uid=303, is_active=False),
     ]
 
     response = anyio.run(_get_bridge_users, {"X-Agent-Key": "test-bridge-key"})
@@ -89,14 +90,14 @@ def test_bridge_users_returns_biometric_mapped_users(monkeypatch):
     assert payload == {
         "users": [
             {
-                "user_id": 1,
+                "user_id": str(UUID(int=1)),
                 "biometric_uid": 101,
                 "first_name": "Alice",
                 "last_name": "Anderson",
                 "is_active": True,
             },
             {
-                "user_id": 3,
+                "user_id": str(UUID(int=3)),
                 "biometric_uid": 303,
                 "first_name": "Cara",
                 "last_name": "Cole",

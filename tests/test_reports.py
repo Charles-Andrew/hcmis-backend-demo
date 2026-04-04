@@ -2,6 +2,7 @@ import anyio
 from datetime import date
 from decimal import Decimal
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +17,7 @@ from app.services import reports as reports_service
 
 
 class FakeReportsRepository:
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
     departments: dict[int, Department] = {}
     daily_shift_records: list[DailyShiftRecord] = []
     leave_requests: list[LeaveRequest] = []
@@ -26,7 +27,7 @@ class FakeReportsRepository:
     def __init__(self, session):
         self.session = session
 
-    async def get_user(self, user_id: int):
+    async def get_user(self, user_id: UUID):
         return self.users.get(user_id)
 
     async def list_users(self, as_of_date=None, active_only=True, include_superusers=False):
@@ -92,7 +93,7 @@ def _reset():
 def _seed():
     ops = Department(id=1, name="Operations", code="OPS", workweek=[], is_active=True)
     hr = User(
-        id=1,
+        id=UUID(int=1),
         email="hr@example.com",
         password_hash="hashed",
         first_name="Harriet",
@@ -112,7 +113,7 @@ def _seed():
     )
     hr.department = ops
     employee = User(
-        id=2,
+        id=UUID(int=2),
         email="employee@example.com",
         password_hash="hashed",
         first_name="Eddie",
@@ -133,8 +134,8 @@ def _seed():
     )
     employee.department = ops
     FakeReportsRepository.departments[1] = ops
-    FakeReportsRepository.users[1] = hr
-    FakeReportsRepository.users[2] = employee
+    FakeReportsRepository.users[hr.id] = hr
+    FakeReportsRepository.users[employee.id] = employee
 
     shift = Shift(
         id=1,
@@ -146,7 +147,7 @@ def _seed():
     schedule = DailyShiftSchedule(
         id=1,
         date=date(2026, 3, 24),
-        user_id=2,
+        user_id=employee.id,
         shift_id=1,
         created_at=utc_now(),
         updated_at=utc_now(),
@@ -167,7 +168,7 @@ def _seed():
 
     leave = LeaveRequest(
         id=1,
-        user_id=2,
+        user_id=employee.id,
         leave_date=date(2026, 3, 1),
         leave_type=LeaveType.PAID.value,
         info="Vacation",
@@ -182,7 +183,7 @@ def _seed():
 
     payslip = Payslip(
         id=1,
-        user_id=2,
+        user_id=employee.id,
         rank="OPS-1",
         salary=Decimal("1000.00"),
         period="2ND",
@@ -206,7 +207,7 @@ def _seed():
     )
     user_evaluation = UserEvaluation(
         id=1,
-        evaluatee_id=2,
+        evaluatee_id=employee.id,
         questionnaire_id=1,
         quarter="FQ",
         year=2026,
@@ -218,7 +219,7 @@ def _seed():
     user_evaluation.questionnaire = questionnaire
     self_eval = Evaluation(
         id=1,
-        evaluator_id=2,
+        evaluator_id=employee.id,
         user_evaluation_id=1,
         questionnaire_id=1,
         content_data=[{"questions": [{"rating": 4}, {"rating": 4}]}],
@@ -228,7 +229,7 @@ def _seed():
     )
     peer_eval = Evaluation(
         id=2,
-        evaluator_id=1,
+        evaluator_id=hr.id,
         user_evaluation_id=1,
         questionnaire_id=1,
         content_data=[{"questions": [{"rating": 2}, {"rating": 4}]}],
@@ -253,7 +254,7 @@ def test_reports_catalog_and_daily_staffing(monkeypatch):
 
     catalog = anyio.run(
         reports_service.list_report_catalog,
-        FakeReportsRepository.users[1],
+        FakeReportsRepository.users[UUID(int=1)],
     )
     assert any(module["code"] == "USERS" for module in catalog)
 
@@ -263,7 +264,7 @@ def test_reports_catalog_and_daily_staffing(monkeypatch):
         date(2026, 3, 24),
     )
     assert report["department_counts"] == [1]
-    assert report["schedules"][0]["user"]["id"] == 2
+    assert report["schedules"][0]["user"]["id"] == str(UUID(int=2))
 
 
 def test_reports_financial_and_performance(monkeypatch):
@@ -289,8 +290,8 @@ def test_reports_financial_and_performance(monkeypatch):
         reports_service.get_employee_performance_summary,
         cast(AsyncSession, object()),
         2026,
-        2,
-        FakeReportsRepository.users[1],
+        UUID(int=2),
+        FakeReportsRepository.users[UUID(int=1)],
     )
     assert performance["self_rating_values"] == [4.0, 0]
     assert performance["peer_rating_values"] == [3.0, 0]
@@ -304,10 +305,10 @@ def test_reports_user_and_leave_summaries(monkeypatch):
     leave_summary = anyio.run(
         reports_service.get_employee_leave_summary_report,
         cast(AsyncSession, object()),
-        2,
+        UUID(int=2),
         date(2026, 3, 1),
         date(2026, 3, 31),
-        FakeReportsRepository.users[1],
+        FakeReportsRepository.users[UUID(int=1)],
     )
     assert leave_summary["leave_counts"]["PA"] == 1
 
