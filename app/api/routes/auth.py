@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +10,12 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.department import Department
 from app.models.user import User
 from app.repositories.users import UserRepository
-from app.schemas.auth import AuthLoginRequest, AuthRegisterRequest, AuthResponse
+from app.schemas.auth import (
+    AuthChangePasswordRequest,
+    AuthLoginRequest,
+    AuthRegisterRequest,
+    AuthResponse,
+)
 from app.schemas.user import UserRead, UserWithCapabilitiesRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -81,6 +88,15 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
         )
+    if (
+        user.must_change_password
+        and user.temporary_password_expires_at is not None
+        and user.temporary_password_expires_at < datetime.now(UTC)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Temporary password has expired. Please contact HR for reset.",
+        )
 
     access_token = create_access_token(subject=str(user.id))
     validated_user = UserWithCapabilitiesRead.model_validate(user).model_copy(
@@ -98,3 +114,43 @@ async def me(current_user: User = Depends(get_current_user)) -> UserWithCapabili
     return UserWithCapabilitiesRead.model_validate(current_user).model_copy(
         update={"capabilities": resolve_user_capabilities(current_user)}
     )
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    payload: AuthChangePasswordRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    if current_user.must_change_password:
+        if verify_password(payload.new_password, current_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be different from current password.",
+            )
+    else:
+        if not payload.current_password or not verify_password(
+            payload.current_password, current_user.password_hash
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect.",
+            )
+        if payload.current_password == payload.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be different from current password.",
+            )
+
+    try:
+        current_user.password_hash = hash_password(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    current_user.must_change_password = False
+    current_user.temporary_password_expires_at = None
+    session.add(current_user)
+    await session.commit()

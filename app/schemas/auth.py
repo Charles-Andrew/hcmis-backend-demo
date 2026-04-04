@@ -23,3 +23,12 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserWithCapabilitiesRead
+
+
+class AuthChangePasswordRequest(BaseModel):
+    current_password: str | None = None
+    new_password: str = Field(min_length=8)
+
+
+class UserPasswordResetResponse(BaseModel):
+    temporary_password: str

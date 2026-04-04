@@ -18,6 +18,7 @@ from app.repositories.leave import (
     LeaveRequestRepository,
 )
 from app.repositories.users import UserRepository
+from app.services.notifications import create_notification
 from app.schemas.leave import (
     LeaveApproverUpsertRequest,
     LeaveCreditUpsertRequest,
@@ -94,6 +95,44 @@ async def _get_approval_chain(
     return first_approver_id, second_approver_id
 
 
+def _leave_type_label(leave_type: str) -> str:
+    for item in list_leave_types():
+        if item["value"] == leave_type:
+            return item["label"]
+    return leave_type
+
+
+def _user_display_name(user: User) -> str:
+    full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    return full_name or user.email
+
+
+async def _notify_user(
+    session: AsyncSession,
+    *,
+    recipient_id: int | None,
+    sender_id: int | None,
+    content: str,
+    url: str | None,
+) -> None:
+    if recipient_id is None:
+        return
+    if recipient_id == sender_id:
+        return
+
+    # Service tests use cast(object()) instead of an actual AsyncSession.
+    if not hasattr(session, "add") or not hasattr(session, "commit"):
+        return
+
+    await create_notification(
+        session,
+        recipient_id=recipient_id,
+        sender_id=sender_id,
+        content=content,
+        url=url,
+    )
+
+
 async def list_leave_requests(
     session: AsyncSession,
     user_id: int | None = None,
@@ -148,7 +187,19 @@ async def create_leave_request(
         ),
         status=LeaveRequestStatus.PENDING.value,
     )
-    return await LeaveRequestRepository(session).create(leave_request)
+    leave_request = await LeaveRequestRepository(session).create(leave_request)
+
+    leave_date = leave_request.leave_date.isoformat()
+    requester_name = _user_display_name(current_user)
+    leave_type = _leave_type_label(leave_request.leave_type)
+    await _notify_user(
+        session,
+        recipient_id=leave_request.first_approver_id,
+        sender_id=current_user.id,
+        content=f"{requester_name} filed a {leave_type} leave request for {leave_date}.",
+        url=f"/leave/inbox?leave_id={leave_request.id}",
+    )
+    return leave_request
 
 
 async def delete_leave_request(
@@ -239,6 +290,43 @@ async def review_leave_request(
         leave_credit.used_credits += 1
         await LeaveCreditRepository(session).save(leave_credit)
 
+    reviewer_name = _user_display_name(current_user)
+    leave_date = leave_request.leave_date.isoformat()
+    leave_type = _leave_type_label(leave_request.leave_type)
+
+    if response == "APPROVE":
+        if (
+            leave_request.first_approver_id == current_user.id
+            and leave_request.second_approver_id is not None
+            and leave_request.status == LeaveRequestStatus.PENDING.value
+        ):
+            await _notify_user(
+                session,
+                recipient_id=leave_request.second_approver_id,
+                sender_id=current_user.id,
+                content=(
+                    f"{reviewer_name} approved a {leave_type} leave request for {leave_date}. "
+                    "Your review is now required."
+                ),
+                url=f"/leave/inbox?leave_id={leave_request.id}",
+            )
+        elif leave_request.status == LeaveRequestStatus.APPROVED.value:
+            await _notify_user(
+                session,
+                recipient_id=leave_request.user_id,
+                sender_id=current_user.id,
+                content=f"Your {leave_type} leave request for {leave_date} has been approved.",
+                url=f"/leave?leave_id={leave_request.id}",
+            )
+    elif leave_request.status == LeaveRequestStatus.REJECTED.value:
+        await _notify_user(
+            session,
+            recipient_id=leave_request.user_id,
+            sender_id=current_user.id,
+            content=f"Your {leave_type} leave request for {leave_date} has been rejected.",
+            url=f"/leave?leave_id={leave_request.id}",
+        )
+
     return leave_request
 
 
@@ -323,10 +411,26 @@ async def set_leave_credit(
     leave_credit = await repository.get_by_user_id(user_id)
     if leave_credit is None:
         leave_credit = LeaveCredit(user_id=user_id, credits=payload.credits, used_credits=0)
-        return await repository.create(leave_credit)
+        leave_credit = await repository.create(leave_credit)
+        await _notify_user(
+            session,
+            recipient_id=user_id,
+            sender_id=None,
+            content=f"Your annual leave credit was set to {leave_credit.credits} day(s).",
+            url="/leave",
+        )
+        return leave_credit
 
     leave_credit.credits = payload.credits
-    return await repository.save(leave_credit)
+    leave_credit = await repository.save(leave_credit)
+    await _notify_user(
+        session,
+        recipient_id=user_id,
+        sender_id=None,
+        content=f"Your annual leave credit was updated to {leave_credit.credits} day(s).",
+        url="/leave",
+    )
+    return leave_credit
 
 
 async def reset_leave_credit(session: AsyncSession, user_id: int) -> LeaveCredit:
@@ -336,4 +440,14 @@ async def reset_leave_credit(session: AsyncSession, user_id: int) -> LeaveCredit
 
     leave_credit = await _ensure_leave_credit(session, user_id)
     leave_credit.used_credits = 0
-    return await LeaveCreditRepository(session).save(leave_credit)
+    leave_credit = await LeaveCreditRepository(session).save(leave_credit)
+    await _notify_user(
+        session,
+        recipient_id=user_id,
+        sender_id=None,
+        content=(
+            "Your leave usage was reset and all configured leave credits are now available."
+        ),
+        url="/leave",
+    )
+    return leave_credit

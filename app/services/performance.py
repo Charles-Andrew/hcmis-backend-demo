@@ -19,6 +19,7 @@ from app.models.performance import (
     SharedResource,
     UserEvaluation,
 )
+from app.models.user import User
 from app.repositories.performance import (
     AnnouncementRepository,
     EvaluationRepository,
@@ -28,6 +29,11 @@ from app.repositories.performance import (
     UserEvaluationRepository,
 )
 from app.repositories.users import UserRepository
+from app.services.notifications import (
+    create_notification_if_possible,
+    create_notifications_if_possible,
+    list_active_user_ids,
+)
 from app.services.shared_resources_storage import (
     delete_stored_resource_file,
     get_stored_resource_file_path,
@@ -65,6 +71,13 @@ def _questionnaire_content(questionnaire: Questionnaire) -> list[dict[str, objec
     if not isinstance(data, list):
         return []
     return [domain for domain in data if isinstance(domain, dict)]
+
+
+def _user_display_name(user: User | None) -> str:
+    if user is None:
+        return "A user"
+    full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    return full_name or user.email
 
 
 def _copy_questionnaire_content(questionnaire: Questionnaire) -> list[dict]:
@@ -530,7 +543,7 @@ async def assign_user_evaluation_evaluator(
     if existing is not None:
         return existing
 
-    return await evaluation_repository.create(
+    created = await evaluation_repository.create(
         Evaluation(
             evaluator_id=payload.evaluator_id,
             user_evaluation_id=user_evaluation.id,
@@ -538,6 +551,17 @@ async def assign_user_evaluation_evaluator(
             content_data=_copy_questionnaire_content(user_evaluation.questionnaire),
         )
     )
+    evaluatee_name = _user_display_name(user_evaluation.evaluatee)
+    await create_notification_if_possible(
+        session,
+        recipient_id=payload.evaluator_id,
+        content=(
+            f"You were assigned to evaluate {evaluatee_name} "
+            f"for Q{user_evaluation.quarter} {user_evaluation.year}."
+        ),
+        url=f"/performance-evaluations?cycle_id={user_evaluation.id}",
+    )
+    return created
 
 
 async def unassign_user_evaluation_evaluator(
@@ -703,7 +727,16 @@ async def submit_evaluation(
     _assert_cycle_allows_editing(item, is_staff=is_staff)
     _ensure_evaluation_complete(item)
     item.date_submitted = utc_now()
-    return await repository.save(item)
+    item = await repository.save(item)
+    evaluator_name = _user_display_name(item.evaluator)
+    await create_notification_if_possible(
+        session,
+        recipient_id=item.user_evaluation.evaluatee_id,
+        sender_id=item.evaluator_id,
+        content=f"{evaluator_name} submitted a performance evaluation for you.",
+        url=f"/performance-evaluations?cycle_id={item.user_evaluation_id}",
+    )
+    return item
 
 
 async def reset_evaluation(
@@ -953,7 +986,16 @@ async def publish_announcement(
     item.status = "published"
     if item.published_at is None:
         item.published_at = utc_now()
-    return await repository.save(item)
+    item = await repository.save(item)
+    recipient_ids = await list_active_user_ids(session)
+    await create_notifications_if_possible(
+        session,
+        recipient_ids=recipient_ids,
+        sender_id=item.author_id,
+        content=f"New announcement published: {item.title}",
+        url=f"/announcements-and-polls?announcement_id={item.id}",
+    )
+    return item
 
 
 async def archive_announcement(
@@ -1085,6 +1127,14 @@ async def publish_poll(
     if poll.published_at is None:
         poll.published_at = utc_now()
     saved = await repository.save(poll)
+    recipient_ids = await list_active_user_ids(session)
+    await create_notifications_if_possible(
+        session,
+        recipient_ids=recipient_ids,
+        sender_id=saved.author_id,
+        content=f"New poll published: {saved.question}",
+        url=f"/announcements-and-polls?poll_id={saved.id}",
+    )
     return _to_poll_read(saved)
 
 
@@ -1364,6 +1414,13 @@ async def create_shared_resource(
     refreshed = await repository.get_by_id(created.id)
     if refreshed is None:
         raise NotFoundError("Shared resource not found.")
+    await create_notifications_if_possible(
+        session,
+        recipient_ids=shared_user_ids,
+        sender_id=current_user_id,
+        content=f"A shared resource was added for you: {refreshed.resource_name}",
+        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+    )
     return _to_shared_resource_read(refreshed)
 
 
@@ -1495,6 +1552,13 @@ async def add_shared_resource_user_access(
     refreshed = await repository.get_by_id(resource_id)
     if refreshed is None:
         raise NotFoundError("Shared resource not found.")
+    await create_notification_if_possible(
+        session,
+        recipient_id=user_id,
+        sender_id=current_user_id,
+        content=f"You were granted access to shared resource: {refreshed.resource_name}",
+        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+    )
     return _to_shared_resource_read(refreshed)
 
 
@@ -1552,6 +1616,16 @@ async def add_shared_resource_confidential_access(
     refreshed = await repository.get_by_id(resource_id)
     if refreshed is None:
         raise NotFoundError("Shared resource not found.")
+    await create_notification_if_possible(
+        session,
+        recipient_id=user_id,
+        sender_id=current_user_id,
+        content=(
+            f"You were granted confidential access to shared resource: "
+            f"{refreshed.resource_name}"
+        ),
+        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+    )
     return _to_shared_resource_read(refreshed)
 
 

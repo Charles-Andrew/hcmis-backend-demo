@@ -15,6 +15,8 @@ def test_core_routes_are_registered():
     assert "/notifications" in paths
     assert "/app-logs" in paths
     assert "/profile/me" in paths
+    assert "/profile/me/photo" in paths
+    assert "/profile/photos/{storage_key:path}" in paths
     assert "/attendance/shifts" in paths
     assert "/attendance/device/getrequest" in paths
     assert "/attendance/bridge/users" in paths

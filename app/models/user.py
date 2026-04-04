@@ -19,6 +19,10 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    temporary_password_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     first_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
     middle_name: Mapped[str | None] = mapped_column(String(100), nullable=True)

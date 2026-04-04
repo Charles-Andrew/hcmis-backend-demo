@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from secrets import choice
 from typing import Any
 
 import bcrypt
@@ -7,6 +8,7 @@ from jose import jwt
 from app.core.config import settings
 
 _BCRYPT_MAX_PASSWORD_BYTES = 72
+_TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 
 
 def _password_to_bytes(password: str) -> bytes:
@@ -46,3 +48,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
         settings.jwt_secret_key,
         algorithms=[settings.jwt_algorithm],
     )
+
+
+def generate_temporary_password(length: int = 12) -> str:
+    return "".join(choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))

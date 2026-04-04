@@ -16,3 +16,10 @@ class NotificationRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class NotificationUnreadCountRead(BaseModel):
+    unread_count: int
+
+
+class NotificationMarkAllReadResult(BaseModel):
+    updated_count: int

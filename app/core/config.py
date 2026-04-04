@@ -43,6 +43,50 @@ class Settings(BaseSettings):
         default=50,
         validation_alias="SHARED_RESOURCES_MAX_FILE_SIZE_MB",
     )
+    profile_photos_storage_backend: str = Field(
+        default="filesystem",
+        validation_alias="PROFILE_PHOTOS_STORAGE_BACKEND",
+    )
+    profile_photos_storage_dir: str = Field(
+        default="./storage/profile-photos",
+        validation_alias="PROFILE_PHOTOS_STORAGE_DIR",
+    )
+    profile_photos_public_base_url: str | None = Field(
+        default=None,
+        validation_alias="PROFILE_PHOTOS_PUBLIC_BASE_URL",
+    )
+    profile_photos_max_file_size_mb: int = Field(
+        default=5,
+        validation_alias="PROFILE_PHOTOS_MAX_FILE_SIZE_MB",
+    )
+    profile_photos_s3_bucket: str = Field(
+        default="",
+        validation_alias="PROFILE_PHOTOS_S3_BUCKET",
+    )
+    profile_photos_s3_region: str = Field(
+        default="ap-southeast-1",
+        validation_alias="PROFILE_PHOTOS_S3_REGION",
+    )
+    profile_photos_s3_endpoint_url: str | None = Field(
+        default=None,
+        validation_alias="PROFILE_PHOTOS_S3_ENDPOINT_URL",
+    )
+    profile_photos_s3_access_key_id: str | None = Field(
+        default=None,
+        validation_alias="PROFILE_PHOTOS_S3_ACCESS_KEY_ID",
+    )
+    profile_photos_s3_secret_access_key: str | None = Field(
+        default=None,
+        validation_alias="PROFILE_PHOTOS_S3_SECRET_ACCESS_KEY",
+    )
+    profile_photos_s3_public_base_url: str | None = Field(
+        default=None,
+        validation_alias="PROFILE_PHOTOS_S3_PUBLIC_BASE_URL",
+    )
+    profile_photos_s3_prefix: str = Field(
+        default="profile-photos",
+        validation_alias="PROFILE_PHOTOS_S3_PREFIX",
+    )
     bridge_agent_key: str = Field(
         default="",
         validation_alias="BRIDGE_AGENT_KEY",

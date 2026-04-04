@@ -32,6 +32,7 @@ from app.repositories.payroll import (
     ThirteenthMonthPayVariableDeductionRepository,
 )
 from app.repositories.users import UserRepository
+from app.services.notifications import create_notification_if_possible
 from app.schemas.payroll import (
     FixedCompensationUpsertRequest,
     FixedCompensationUsersRequest,
@@ -376,6 +377,7 @@ async def update_payslip(
     payslip = await repository.get_by_id(payslip_id)
     if payslip is None:
         raise NotFoundError("Payslip not found.")
+    was_released = payslip.released
     if payload.rank is not None:
         payslip.rank = payload.rank
     if payload.salary is not None:
@@ -383,7 +385,18 @@ async def update_payslip(
     if payload.released is not None:
         payslip.released = payload.released
         payslip.release_date = utc_now() if payload.released else None
-    return await repository.save(payslip)
+    payslip = await repository.save(payslip)
+    if not was_released and payslip.released:
+        await create_notification_if_possible(
+            session,
+            recipient_id=payslip.user_id,
+            content=(
+                f"Your payslip for {payslip.month}/{payslip.year} "
+                f"({payslip.period}) is now available."
+            ),
+            url=f"/my-payslips?payslip_id={payslip.id}",
+        )
+    return payslip
 
 
 async def toggle_payslip_release(session: AsyncSession, payslip_id: int) -> Payslip:
@@ -393,7 +406,18 @@ async def toggle_payslip_release(session: AsyncSession, payslip_id: int) -> Pays
         raise NotFoundError("Payslip not found.")
     payslip.released = not payslip.released
     payslip.release_date = utc_now() if payslip.released else None
-    return await repository.save(payslip)
+    payslip = await repository.save(payslip)
+    if payslip.released:
+        await create_notification_if_possible(
+            session,
+            recipient_id=payslip.user_id,
+            content=(
+                f"Your payslip for {payslip.month}/{payslip.year} "
+                f"({payslip.period}) is now available."
+            ),
+            url=f"/my-payslips?payslip_id={payslip.id}",
+        )
+    return payslip
 
 
 def _get_config_item(settings: PayrollSetting, name: str) -> dict:
@@ -551,12 +575,21 @@ async def update_thirteenth_month_pay(
     item = await repository.get_by_id(item_id)
     if item is None:
         raise NotFoundError("13th month pay not found.")
+    was_released = item.released
     if payload.amount is not None:
         item.amount = payload.amount
     if payload.released is not None:
         item.released = payload.released
         item.release_date = utc_now() if payload.released else None
-    return await repository.save(item)
+    item = await repository.save(item)
+    if not was_released and item.released:
+        await create_notification_if_possible(
+            session,
+            recipient_id=item.user_id,
+            content=f"Your 13th month pay for {item.month}/{item.year} is now available.",
+            url=f"/my-payslips?thirteenth_month_pay_id={item.id}",
+        )
+    return item
 
 
 async def toggle_thirteenth_month_pay_release(
@@ -568,7 +601,15 @@ async def toggle_thirteenth_month_pay_release(
         raise NotFoundError("13th month pay not found.")
     item.released = not item.released
     item.release_date = utc_now() if item.released else None
-    return await repository.save(item)
+    item = await repository.save(item)
+    if item.released:
+        await create_notification_if_possible(
+            session,
+            recipient_id=item.user_id,
+            content=f"Your 13th month pay for {item.month}/{item.year} is now available.",
+            url=f"/my-payslips?thirteenth_month_pay_id={item.id}",
+        )
+    return item
 
 
 async def delete_thirteenth_month_pay(session: AsyncSession, item_id: int) -> None:

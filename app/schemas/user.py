@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import EmailStr
 from pydantic import Field
+from pydantic import field_validator
 
 from app.schemas.department import DepartmentRead
 
@@ -31,12 +32,21 @@ class UserRead(BaseModel):
     resignation_date: date | None = None
     profile_picture_url: str | None = None
     can_modify_shift: bool
+    must_change_password: bool
+    temporary_password_expires_at: datetime | None = None
     is_active: bool
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("must_change_password", mode="before")
+    @classmethod
+    def normalize_must_change_password(cls, value: object) -> bool:
+        if value is None:
+            return False
+        return bool(value)
 
 
 class UserWithCapabilitiesRead(UserRead):

@@ -1,12 +1,20 @@
+from datetime import UTC, datetime, timedelta
+
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import ConflictError
 from app.core.exceptions import NotFoundError
-from app.core.security import hash_password
+from app.core.security import generate_temporary_password, hash_password
 from app.models.user import User
 from app.repositories.departments import DepartmentRepository
 from app.repositories.users import UserRepository
+from app.services.notifications import create_notification_if_possible
+from app.services.profile_photo_storage import (
+    delete_profile_photo_by_url,
+    save_profile_photo,
+)
 from app.schemas.user import UserCreateRequest
 from app.schemas.user import (
     UserBiometricUpdateRequest,
@@ -136,7 +144,15 @@ async def toggle_user_status(session: AsyncSession, user_id: int) -> User:
         raise NotFoundError("User not found.")
 
     user.is_active = not user.is_active
-    return await user_repository.save(user)
+    user = await user_repository.save(user)
+    status_text = "activated" if user.is_active else "deactivated"
+    await create_notification_if_possible(
+        session,
+        recipient_id=user.id,
+        content=f"Your account was {status_text}.",
+        url="/profile",
+    )
+    return user
 
 
 async def update_own_profile(
@@ -152,6 +168,38 @@ async def update_own_profile(
         setattr(user, field_name, value)
 
     return await user_repository.save(user)
+
+
+async def upload_own_profile_photo(
+    session: AsyncSession,
+    user_id: int,
+    uploaded_file: UploadFile,
+    *,
+    request_base_url: str,
+) -> User:
+    user_repository = UserRepository(session)
+    user = await user_repository.get_by_id(user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+
+    previous_photo_url = user.profile_picture_url
+    stored_photo = await save_profile_photo(
+        user_id=user_id,
+        uploaded_file=uploaded_file,
+        request_base_url=request_base_url,
+    )
+    user.profile_picture_url = stored_photo.url
+
+    try:
+        saved_user = await user_repository.save(user)
+    except Exception:
+        delete_profile_photo_by_url(stored_photo.url)
+        raise
+
+    if previous_photo_url and previous_photo_url != stored_photo.url:
+        delete_profile_photo_by_url(previous_photo_url)
+
+    return saved_user
 
 
 async def update_user_biometric_uid(
@@ -173,3 +221,26 @@ async def update_user_biometric_uid(
 
     user.biometric_uid = payload.biometric_uid
     return await user_repository.save(user)
+
+
+async def reset_user_password(
+    session: AsyncSession,
+    user_id: int,
+) -> tuple[User, str]:
+    user_repository = UserRepository(session)
+    user = await user_repository.get_by_id(user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+
+    temporary_password = generate_temporary_password()
+    user.password_hash = hash_password(temporary_password)
+    user.must_change_password = True
+    user.temporary_password_expires_at = datetime.now(UTC) + timedelta(hours=24)
+    saved_user = await user_repository.save(user)
+    await create_notification_if_possible(
+        session,
+        recipient_id=saved_user.id,
+        content="Your password was reset by HR. Please change it on your next login.",
+        url="/change-password",
+    )
+    return saved_user, temporary_password

@@ -4,6 +4,7 @@ from app.core.exceptions import NotFoundError
 from app.models.chat import Message
 from app.models.user import User
 from app.repositories.chat import ChatUserRepository, MessageRepository
+from app.services.notifications import create_notification_if_possible
 from app.schemas.chat import (
     ChatContactRead,
     ConversationRead,
@@ -47,7 +48,18 @@ async def send_message(
         message=payload.message.strip(),
         seen=False,
     )
-    return await MessageRepository(session).create(message)
+    message = await MessageRepository(session).create(message)
+    sender_name = " ".join(
+        part for part in [current_user.first_name, current_user.last_name] if part
+    ).strip() or current_user.email
+    await create_notification_if_possible(
+        session,
+        recipient_id=payload.receiver_id,
+        sender_id=current_user.id,
+        content=f"New message from {sender_name}.",
+        url="/dashboard",
+    )
+    return message
 
 
 async def mark_conversation_seen(

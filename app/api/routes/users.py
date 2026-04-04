@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_staff_user, get_db_session
 from app.models.user import User
+from app.schemas.auth import UserPasswordResetResponse
 from app.schemas.user import (
     UserCreateRequest,
     UserBiometricUpdateRequest,
@@ -13,6 +14,7 @@ from app.services.users import (
     create_user,
     get_user,
     list_users,
+    reset_user_password,
     toggle_user_status,
     update_user,
     update_user_biometric_uid,
@@ -94,3 +96,13 @@ async def patch_user_biometric_uid(
     current_user: User = Depends(require_staff_user),
 ) -> User:
     return await update_user_biometric_uid(session, user_id, payload)
+
+
+@router.post("/{user_id}/reset-password", response_model=UserPasswordResetResponse)
+async def post_reset_user_password(
+    user_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> UserPasswordResetResponse:
+    _, temporary_password = await reset_user_password(session, user_id)
+    return UserPasswordResetResponse(temporary_password=temporary_password)

@@ -18,6 +18,7 @@ from app.models.attendance import (
     ShiftSwapRequest,
 )
 from app.models.department import Department
+from app.models.user import User
 from app.repositories.attendance import (
     AttendanceRecordRepository,
     DepartmentRosterDayRepository,
@@ -29,6 +30,7 @@ from app.repositories.attendance import (
 )
 from app.repositories.departments import DepartmentRepository
 from app.repositories.users import UserRepository
+from app.services.notifications import create_notification_if_possible
 from app.schemas.attendance import (
     AttendanceRecordRead,
     AttendanceRecordCreateRequest,
@@ -55,6 +57,13 @@ from app.schemas.attendance import (
     ShiftSwapRequestRespondRequest,
     ShiftTemplateUpdateRequest,
 )
+
+
+def _display_user_name(user: User | None) -> str:
+    if user is None:
+        return "A user"
+    full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip()
+    return full_name or user.email
 
 
 def _month_window(year: int, month: int) -> tuple[date, date]:
@@ -225,7 +234,17 @@ async def create_employee_shift_assignment(
         user_id=payload.user_id,
         shift_template_id=payload.shift_id,
     )
-    return await repository.create(schedule)
+    schedule = await repository.create(schedule)
+    await create_notification_if_possible(
+        session,
+        recipient_id=payload.user_id,
+        content=(
+            f"You were assigned to shift {shift.description} on "
+            f"{payload.date.isoformat()}."
+        ),
+        url=f"/attendance?year={payload.date.year}&month={payload.date.month}",
+    )
+    return schedule
 
 
 async def copy_previous_month_employee_shift_assignments(
@@ -358,7 +377,20 @@ async def delete_employee_shift_assignment(
     schedule = await repository.get_by_id(schedule_id)
     if schedule is None:
         raise NotFoundError("Daily shift schedule not found.")
+    shift_description = (
+        schedule.shift_template.description if schedule.shift_template is not None else "your shift"
+    )
+    schedule_date = schedule.date.isoformat()
+    user_id = schedule.user_id
     await repository.delete(schedule)
+    await create_notification_if_possible(
+        session,
+        recipient_id=user_id,
+        content=(
+            f"Your shift assignment ({shift_description}) on {schedule_date} was removed."
+        ),
+        url=f"/attendance?year={schedule.date.year}&month={schedule.date.month}",
+    )
 
 
 async def update_employee_shift_assignment(
@@ -370,11 +402,24 @@ async def update_employee_shift_assignment(
     schedule = await repository.get_by_id(schedule_id)
     if schedule is None:
         raise NotFoundError("Daily shift schedule not found.")
+    previous_shift_description = (
+        schedule.shift_template.description if schedule.shift_template is not None else "previous shift"
+    )
     shift = await ShiftTemplateRepository(session).get_by_id(payload.shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
     schedule.shift_template_id = payload.shift_id
-    return await repository.save(schedule)
+    schedule = await repository.save(schedule)
+    await create_notification_if_possible(
+        session,
+        recipient_id=schedule.user_id,
+        content=(
+            f"Your shift on {schedule.date.isoformat()} was updated from "
+            f"{previous_shift_description} to {shift.description}."
+        ),
+        url=f"/attendance?year={schedule.date.year}&month={schedule.date.month}",
+    )
+    return schedule
 
 
 async def list_attendance_records(
@@ -567,7 +612,19 @@ async def create_overtime_request(
         date=payload.date,
         status=OvertimeRequest.Status.PENDING.value,
     )
-    return await OvertimeRepository(session).create(overtime)
+    overtime = await OvertimeRepository(session).create(overtime)
+    requester_name = _display_user_name(user)
+    await create_notification_if_possible(
+        session,
+        recipient_id=overtime.approver_id,
+        sender_id=overtime.user_id,
+        content=f"{requester_name} filed an overtime request for {overtime.date.isoformat()}.",
+        url=(
+            f"/hr/overtime-management?scope=approvals&status=PEND"
+            f"&month={overtime.date.month}&year={overtime.date.year}"
+        ),
+    )
+    return overtime
 
 
 async def respond_to_overtime_request(
@@ -589,7 +646,18 @@ async def respond_to_overtime_request(
         if payload.response == "APPROVE"
         else OvertimeRequest.Status.REJECTED.value
     )
-    return await repository.save(overtime)
+    overtime = await repository.save(overtime)
+    decision = "approved" if payload.response == "APPROVE" else "rejected"
+    await create_notification_if_possible(
+        session,
+        recipient_id=overtime.user_id,
+        sender_id=approver_id,
+        content=(
+            f"Your overtime request for {overtime.date.isoformat()} has been {decision}."
+        ),
+        url=f"/overtime?month={overtime.date.month}&year={overtime.date.year}",
+    )
+    return overtime
 
 
 async def delete_overtime_request(session: AsyncSession, overtime_id: int) -> None:
@@ -616,9 +684,12 @@ async def create_shift_swap_request(
 ) -> ShiftSwapRequest:
     user_repository = UserRepository(session)
     schedule_repository = EmployeeShiftAssignmentRepository(session)
+    users: dict[int, User] = {}
     for user_id in (payload.requested_by_id, payload.requested_for_id, payload.approver_id):
-        if await user_repository.get_by_id(user_id) is None:
+        user = await user_repository.get_by_id(user_id)
+        if user is None:
             raise NotFoundError("User not found.")
+        users[user_id] = user
     current_schedule = await schedule_repository.get_by_id(payload.current_schedule_id)
     requested_schedule = await schedule_repository.get_by_id(payload.requested_schedule_id)
     if current_schedule is None or requested_schedule is None:
@@ -632,7 +703,29 @@ async def create_shift_swap_request(
         info=payload.info,
         status=ShiftSwapRequest.Status.PENDING.value,
     )
-    return await ShiftSwapRepository(session).create(swap)
+    swap = await ShiftSwapRepository(session).create(swap)
+    requester_name = _display_user_name(users.get(payload.requested_by_id))
+    await create_notification_if_possible(
+        session,
+        recipient_id=swap.approver_id,
+        sender_id=swap.requested_by_id,
+        content=f"{requester_name} filed a shift swap request that needs your review.",
+        url=(
+            f"/hr/user-attendance-management?tab=shifts&user={swap.requested_by_id}"
+            f"&year={current_schedule.date.year}&month={current_schedule.date.month}"
+        ),
+    )
+    await create_notification_if_possible(
+        session,
+        recipient_id=swap.requested_for_id,
+        sender_id=swap.requested_by_id,
+        content=f"{requester_name} requested to swap shift assignments with you.",
+        url=(
+            f"/attendance?year={current_schedule.date.year}"
+            f"&month={current_schedule.date.month}"
+        ),
+    )
+    return swap
 
 
 async def respond_to_shift_swap_request(
@@ -652,7 +745,23 @@ async def respond_to_shift_swap_request(
         if payload.response == "APPROVE"
         else ShiftSwapRequest.Status.REJECTED.value
     )
-    return await repository.save(swap)
+    swap = await repository.save(swap)
+    decision = "approved" if payload.response == "APPROVE" else "rejected"
+    await create_notification_if_possible(
+        session,
+        recipient_id=swap.requested_by_id,
+        sender_id=approver_id,
+        content=f"Your shift swap request has been {decision}.",
+        url="/attendance",
+    )
+    await create_notification_if_possible(
+        session,
+        recipient_id=swap.requested_for_id,
+        sender_id=approver_id,
+        content=f"A shift swap request involving you has been {decision}.",
+        url="/attendance",
+    )
+    return swap
 
 
 async def delete_shift_swap_request(session: AsyncSession, swap_id: int) -> None:

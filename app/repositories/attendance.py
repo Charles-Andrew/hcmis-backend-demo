@@ -346,7 +346,7 @@ class OvertimeRepository:
 
     async def get_by_id(self, overtime_id: int) -> OvertimeRequest | None:
         result = await self.session.execute(
-            select(OvertimeRequest).where(OvertimeRequest.id == overtime_id)
+            self._base_statement().where(OvertimeRequest.id == overtime_id)
         )
         return result.scalar_one_or_none()
 
@@ -354,12 +354,14 @@ class OvertimeRepository:
         self.session.add(overtime)
         await self.session.commit()
         await self.session.refresh(overtime)
-        return overtime
+        loaded = await self.get_by_id(overtime.id)
+        return loaded or overtime
 
     async def save(self, overtime: OvertimeRequest) -> OvertimeRequest:
         await self.session.commit()
         await self.session.refresh(overtime)
-        return overtime
+        loaded = await self.get_by_id(overtime.id)
+        return loaded or overtime
 
     async def delete(self, overtime: OvertimeRequest) -> None:
         await self.session.delete(overtime)
