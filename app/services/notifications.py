@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -9,7 +11,7 @@ from app.repositories.notifications import NotificationRepository
 
 async def list_notifications(
     session: AsyncSession,
-    recipient_id: int,
+    recipient_id: UUID,
     *,
     limit: int = 50,
     offset: int = 0,
@@ -25,7 +27,7 @@ async def list_notifications(
 
 
 async def mark_notification_read(
-    session: AsyncSession, notification_id: int, recipient_id: int
+    session: AsyncSession, notification_id: int, recipient_id: UUID
 ) -> Notification:
     repository = NotificationRepository(session)
     notification = await repository.get_for_recipient(notification_id, recipient_id)
@@ -35,12 +37,12 @@ async def mark_notification_read(
     return await repository.save(notification)
 
 
-async def mark_all_notifications_read(session: AsyncSession, recipient_id: int) -> int:
+async def mark_all_notifications_read(session: AsyncSession, recipient_id: UUID) -> int:
     repository = NotificationRepository(session)
     return await repository.mark_all_read_for_recipient(recipient_id)
 
 
-async def count_unread_notifications(session: AsyncSession, recipient_id: int) -> int:
+async def count_unread_notifications(session: AsyncSession, recipient_id: UUID) -> int:
     repository = NotificationRepository(session)
     return await repository.count_unread_for_recipient(recipient_id)
 
@@ -48,9 +50,9 @@ async def count_unread_notifications(session: AsyncSession, recipient_id: int) -
 async def create_notification(
     session: AsyncSession,
     *,
-    recipient_id: int,
+    recipient_id: UUID,
     content: str,
-    sender_id: int | None = None,
+    sender_id: UUID | None = None,
     url: str | None = None,
 ) -> Notification:
     repository = NotificationRepository(session)
@@ -71,9 +73,9 @@ def notifications_supported(session: AsyncSession) -> bool:
 async def create_notification_if_possible(
     session: AsyncSession,
     *,
-    recipient_id: int | None,
+    recipient_id: UUID | None,
     content: str,
-    sender_id: int | None = None,
+    sender_id: UUID | None = None,
     url: str | None = None,
     skip_sender: bool = True,
 ) -> Notification | None:
@@ -95,9 +97,9 @@ async def create_notification_if_possible(
 async def create_notifications_if_possible(
     session: AsyncSession,
     *,
-    recipient_ids: list[int],
+    recipient_ids: list[UUID],
     content: str,
-    sender_id: int | None = None,
+    sender_id: UUID | None = None,
     url: str | None = None,
     skip_sender: bool = True,
 ) -> int:
@@ -121,7 +123,7 @@ async def create_notifications_if_possible(
     return created_count
 
 
-async def list_active_user_ids(session: AsyncSession) -> list[int]:
+async def list_active_user_ids(session: AsyncSession) -> list[UUID]:
     if not notifications_supported(session):
         return []
     statement = select(User.id).where(
@@ -129,4 +131,4 @@ async def list_active_user_ids(session: AsyncSession) -> list[int]:
         User.is_superuser.is_(False),
     )
     result = await session.execute(statement)
-    return [int(user_id) for user_id in result.scalars().all()]
+    return list(result.scalars().all())

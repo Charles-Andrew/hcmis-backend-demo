@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,7 +13,7 @@ class MessageRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_between(self, user_a_id: int, user_b_id: int) -> list[Message]:
+    async def list_between(self, user_a_id: UUID, user_b_id: UUID) -> list[Message]:
         statement = (
             select(Message)
             .options(
@@ -33,14 +35,14 @@ class MessageRepository:
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
-    async def list_unseen_counts_for_receiver(self, receiver_id: int) -> list[tuple[int, int]]:
+    async def list_unseen_counts_for_receiver(self, receiver_id: UUID) -> list[tuple[UUID, int]]:
         statement = (
             select(Message.sender_id, func.count(Message.id))
             .where(Message.receiver_id == receiver_id, Message.seen.is_(False))
             .group_by(Message.sender_id)
         )
         result = await self.session.execute(statement)
-        return [(int(sender_id), int(count)) for sender_id, count in result.all()]
+        return [(sender_id, int(count)) for sender_id, count in result.all()]
 
     async def create(self, message: Message) -> Message:
         self.session.add(message)
@@ -53,7 +55,7 @@ class MessageRepository:
         await self.session.refresh(message)
         return message
 
-    async def mark_seen_between(self, sender_id: int, receiver_id: int) -> int:
+    async def mark_seen_between(self, sender_id: UUID, receiver_id: UUID) -> int:
         statement = select(Message).where(
             Message.sender_id == sender_id,
             Message.receiver_id == receiver_id,
@@ -72,7 +74,7 @@ class ChatUserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_by_id(self, user_id: int) -> User | None:
+    async def get_by_id(self, user_id: UUID) -> User | None:
         result = await self.session.execute(
             select(User).options(selectinload(User.department)).where(User.id == user_id)
         )

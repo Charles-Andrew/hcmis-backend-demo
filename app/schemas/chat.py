@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -9,8 +10,8 @@ from app.schemas.user import UserRead
 
 class MessageRead(BaseModel):
     id: int
-    sender_id: int
-    receiver_id: int
+    sender_id: UUID
+    receiver_id: UUID
     message: str | None = None
     seen: bool
     sender: UserRead | None = None
@@ -22,7 +23,7 @@ class MessageRead(BaseModel):
 
 
 class MessageCreateRequest(BaseModel):
-    receiver_id: int
+    receiver_id: UUID
     message: str = Field(min_length=1)
 
 

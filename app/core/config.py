@@ -87,6 +87,10 @@ class Settings(BaseSettings):
         default="profile-photos",
         validation_alias="PROFILE_PHOTOS_S3_PREFIX",
     )
+    profile_photos_signed_url_ttl_seconds: int = Field(
+        default=900,
+        validation_alias="PROFILE_PHOTOS_SIGNED_URL_TTL_SECONDS",
+    )
     bridge_agent_key: str = Field(
         default="",
         validation_alias="BRIDGE_AGENT_KEY",

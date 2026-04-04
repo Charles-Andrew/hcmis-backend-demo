@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +30,7 @@ async def read_chat_users(
 
 @router.get("/conversations/{other_user_id}", response_model=ConversationRead)
 async def read_conversation(
-    other_user_id: int,
+    other_user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ConversationRead:
@@ -46,7 +48,7 @@ async def post_message(
 
 @router.post("/conversations/{other_user_id}/seen", status_code=status.HTTP_204_NO_CONTENT)
 async def mark_seen(
-    other_user_id: int,
+    other_user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> None:

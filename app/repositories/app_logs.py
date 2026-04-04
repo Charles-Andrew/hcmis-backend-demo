@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datetime import UTC, date, datetime, time
 
 from sqlalchemy import select
@@ -11,7 +13,7 @@ class AppLogRepository:
         self.session = session
 
     async def list_for_date(
-        self, selected_date: date, user_id: int | None = None
+        self, selected_date: date, user_id: UUID | None = None
     ) -> list[AppLog]:
         start = datetime.combine(selected_date, time.min, tzinfo=UTC)
         end = datetime.combine(selected_date, time.max, tzinfo=UTC)

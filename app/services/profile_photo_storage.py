@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
 from botocore.exceptions import ClientError
@@ -127,7 +127,7 @@ def _build_s3_client():
     return boto3.client("s3", **client_kwargs)
 
 
-def _build_s3_storage_key(user_id: int, extension: str) -> str:
+def _build_s3_storage_key(user_id: UUID, extension: str) -> str:
     prefix = settings.profile_photos_s3_prefix.strip().strip("/")
     suffix = f"{user_id}/{uuid4().hex}{extension}"
     return f"{prefix}/{suffix}" if prefix else suffix
@@ -179,7 +179,7 @@ def _infer_supabase_public_base_url(endpoint_url: str, bucket: str) -> str | Non
 
 
 async def save_profile_photo(
-    user_id: int,
+    user_id: UUID,
     uploaded_file: UploadFile,
     *,
     request_base_url: str,
@@ -278,9 +278,43 @@ def _extract_s3_storage_key(photo_url: str) -> str | None:
 
     parsed = urlparse(photo_url)
     path = parsed.path.lstrip("/")
+    sign_marker = f"storage/v1/object/sign/{bucket}/"
+    if bucket and sign_marker in path:
+        _, storage_key = path.split(sign_marker, maxsplit=1)
+        return storage_key.strip("/") or None
     if bucket and path.startswith(f"{bucket}/"):
         return path.removeprefix(f"{bucket}/").strip("/") or None
     return path or None
+
+
+def get_profile_photo_read_url(photo_url: str | None) -> str | None:
+    if not photo_url:
+        return None
+
+    backend = _profile_backend()
+    if backend == "filesystem":
+        return photo_url
+
+    if backend == "s3":
+        storage_key = _extract_s3_storage_key(photo_url)
+        if not storage_key:
+            return None
+
+        bucket = settings.profile_photos_s3_bucket.strip()
+        if not bucket:
+            return None
+
+        expires_in = max(60, int(settings.profile_photos_signed_url_ttl_seconds))
+        client = _build_s3_client()
+        return str(
+            client.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={"Bucket": bucket, "Key": storage_key},
+                ExpiresIn=expires_in,
+            )
+        )
+
+    return photo_url
 
 
 def delete_profile_photo_by_url(photo_url: str | None) -> None:

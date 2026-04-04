@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -15,20 +16,20 @@ class LeaveTypeOptionRead(BaseModel):
 
 
 class LeaveApproverUpsertRequest(BaseModel):
-    department_approver_id: int | None = None
-    director_approver_id: int | None = None
-    president_approver_id: int | None = None
-    hr_approver_id: int | None = None
+    department_approver_id: UUID | None = None
+    director_approver_id: UUID | None = None
+    president_approver_id: UUID | None = None
+    hr_approver_id: UUID | None = None
 
 
 class LeaveApproverRead(BaseModel):
     id: int
     department_id: int
     department: DepartmentRead | None = None
-    department_approver_id: int | None = None
-    director_approver_id: int | None = None
-    president_approver_id: int | None = None
-    hr_approver_id: int | None = None
+    department_approver_id: UUID | None = None
+    director_approver_id: UUID | None = None
+    president_approver_id: UUID | None = None
+    hr_approver_id: UUID | None = None
     department_approver: UserRead | None = None
     director_approver: UserRead | None = None
     president_approver: UserRead | None = None
@@ -44,7 +45,7 @@ class LeaveCreditUpsertRequest(BaseModel):
 
 
 class LeaveCreditRead(BaseModel):
-    user_id: int
+    user_id: UUID
     credits: int
     used_credits: int
     remaining_credits: int
@@ -67,14 +68,14 @@ class LeaveRequestReviewRequest(BaseModel):
 
 class LeaveRequestRead(BaseModel):
     id: int
-    user_id: int
+    user_id: UUID
     leave_date: date
     leave_type: str
     info: str | None = None
-    first_approver_id: int | None = None
+    first_approver_id: UUID | None = None
     first_approver_status: str
     first_approver_at: datetime | None = None
-    second_approver_id: int | None = None
+    second_approver_id: UUID | None = None
     second_approver_status: str | None = None
     second_approver_at: datetime | None = None
     status: str

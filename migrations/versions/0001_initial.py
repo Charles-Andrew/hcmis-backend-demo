@@ -18,6 +18,8 @@ depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
     op.create_table(
         "departments",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
@@ -41,7 +43,13 @@ def upgrade() -> None:
     )
     op.create_table(
         "users",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column(
+            "id",
+            sa.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("first_name", sa.String(length=100), nullable=False, server_default=""),
@@ -79,8 +87,8 @@ def upgrade() -> None:
     op.create_table(
         "notifications",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("recipient_id", sa.Integer(), nullable=False),
-        sa.Column("sender_id", sa.Integer(), nullable=True),
+        sa.Column("recipient_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("sender_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("url", sa.Text(), nullable=True),
         sa.Column("read", sa.Boolean(), nullable=False, server_default=sa.false()),

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from enum import Enum as PyEnum
+from uuid import UUID
 
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,16 +28,16 @@ class LeaveApprover(Base):
     department_id: Mapped[int] = mapped_column(
         ForeignKey("departments.id"), unique=True, index=True, nullable=False
     )
-    department_approver_id: Mapped[int | None] = mapped_column(
+    department_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
-    director_approver_id: Mapped[int | None] = mapped_column(
+    director_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
-    president_approver_id: Mapped[int | None] = mapped_column(
+    president_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
-    hr_approver_id: Mapped[int | None] = mapped_column(
+    hr_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -56,7 +57,7 @@ class LeaveApprover(Base):
 class LeaveCredit(Base):
     __tablename__ = "leave_credits"
 
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id"), primary_key=True, index=True
     )
     credits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -79,11 +80,11 @@ class LeaveRequest(Base):
     __tablename__ = "leave_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     leave_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     leave_type: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
     info: Mapped[str | None] = mapped_column(Text, nullable=True)
-    first_approver_id: Mapped[int | None] = mapped_column(
+    first_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
     first_approver_status: Mapped[str] = mapped_column(
@@ -92,7 +93,7 @@ class LeaveRequest(Base):
     first_approver_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    second_approver_id: Mapped[int | None] = mapped_column(
+    second_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
     second_approver_status: Mapped[str | None] = mapped_column(

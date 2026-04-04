@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -354,7 +356,7 @@ async def remove_questionnaire(
 
 @router.get("/user-evaluations", response_model=list[UserEvaluationRead])
 async def read_user_evaluations(
-    evaluatee_id: int | None = None,
+    evaluatee_id: UUID | None = None,
     questionnaire_id: int | None = None,
     quarter: str | None = None,
     year: int | None = None,
@@ -427,7 +429,7 @@ async def remove_user_evaluation(
 @router.get("/user-evaluations/{user_evaluation_id}/evaluations", response_model=list[EvaluationRead])
 async def read_evaluations(
     user_evaluation_id: int,
-    evaluator_id: int | None = None,
+    evaluator_id: UUID | None = None,
     is_submitted: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
@@ -445,7 +447,7 @@ async def read_evaluations(
 @router.get("/evaluations", response_model=list[EvaluationRead])
 async def read_all_evaluations(
     user_evaluation_id: int | None = None,
-    evaluator_id: int | None = None,
+    evaluator_id: UUID | None = None,
     is_submitted: bool | None = None,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
@@ -504,7 +506,7 @@ async def assign_evaluator(
 )
 async def unassign_evaluator(
     user_evaluation_id: int,
-    evaluator_id: int,
+    evaluator_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> None:
@@ -606,7 +608,7 @@ async def read_user_evaluation_aggregate_summary(
 
 @router.get("/shared-resources", response_model=list[SharedResourceRead])
 async def read_shared_resources(
-    uploader_id: int | None = None,
+    uploader_id: UUID | None = None,
     search: str | None = None,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
@@ -645,9 +647,9 @@ async def upload_shared_resource(
     uploaded_file: UploadFile = File(...),
     resource_name: str | None = Form(default=None),
     description: str | None = Form(default=None),
-    shared_user_ids: list[int] = Form(default=[]),
+    shared_user_ids: list[UUID] = Form(default=[]),
     is_confidential: bool = Form(default=False),
-    confidential_access_user_ids: list[int] = Form(default=[]),
+    confidential_access_user_ids: list[UUID] = Form(default=[]),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> SharedResourceRead:
@@ -730,7 +732,7 @@ async def add_share_access(
 @router.delete("/shared-resources/{resource_id}/shares/{user_id}", response_model=SharedResourceRead)
 async def remove_share_access(
     resource_id: int,
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> SharedResourceRead:
@@ -765,7 +767,7 @@ async def add_confidential_access(
 )
 async def remove_confidential_access(
     resource_id: int,
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> SharedResourceRead:

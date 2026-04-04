@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,7 +134,7 @@ async def get_mp2(session: AsyncSession) -> Mp2Account:
 
 
 async def update_mp2(
-    session: AsyncSession, amount: Decimal, user_ids: list[int]
+    session: AsyncSession, amount: Decimal, user_ids: list[UUID]
 ) -> Mp2Account:
     mp2 = await get_mp2(session)
     mp2.amount = amount
@@ -289,7 +290,7 @@ async def update_fixed_compensation_users(
     return await repository.save(compensation)
 
 
-async def _resolve_users(session: AsyncSession, user_ids: list[int]) -> list[User]:
+async def _resolve_users(session: AsyncSession, user_ids: list[UUID]) -> list[User]:
     user_repository = UserRepository(session)
     users: list[User] = []
     for user_id in user_ids:
@@ -302,7 +303,7 @@ async def _resolve_users(session: AsyncSession, user_ids: list[int]) -> list[Use
 
 async def get_payslips(
     session: AsyncSession,
-    user_id: int | None = None,
+    user_id: UUID | None = None,
     month: int | None = None,
     year: int | None = None,
     period: str | None = None,
@@ -539,7 +540,7 @@ async def remove_payslip_variable_deduction(
 
 async def list_thirteenth_month_pays(
     session: AsyncSession,
-    user_id: int | None = None,
+    user_id: UUID | None = None,
     month: int | None = None,
     year: int | None = None,
     released: bool | None = None,

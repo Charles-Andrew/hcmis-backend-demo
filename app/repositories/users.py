@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,7 +12,7 @@ class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_by_id(self, user_id: int) -> User | None:
+    async def get_by_id(self, user_id: UUID) -> User | None:
         statement = (
             select(User)
             .options(selectinload(User.department))
@@ -53,7 +55,7 @@ class UserRepository:
         active_only: bool | None = None,
         include_superusers: bool = False,
         exclude_hr: bool = False,
-        exclude_user_id: int | None = None,
+        exclude_user_id: UUID | None = None,
     ) -> list[User]:
         statement = select(User).options(selectinload(User.department)).outerjoin(
             Department, Department.id == User.department_id

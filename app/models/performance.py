@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -45,7 +46,7 @@ class UserEvaluation(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    evaluatee_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    evaluatee_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     questionnaire_id: Mapped[int] = mapped_column(ForeignKey("questionnaires.id"), index=True)
     quarter: Mapped[str] = mapped_column(String(2), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -77,7 +78,7 @@ class Evaluation(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    evaluator_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    evaluator_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     user_evaluation_id: Mapped[int] = mapped_column(ForeignKey("user_evaluations.id"), index=True)
     questionnaire_id: Mapped[int] = mapped_column(ForeignKey("questionnaires.id"), index=True)
     positive_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -100,7 +101,7 @@ class SharedResource(Base):
     __tablename__ = "shared_resources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    uploader_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -136,7 +137,7 @@ class SharedResourceShare(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("shared_resources.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     resource = relationship("SharedResource", back_populates="shares")
@@ -155,7 +156,7 @@ class SharedResourceConfidentialAccess(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("shared_resources.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     resource = relationship("SharedResource", back_populates="confidential_access")
@@ -166,7 +167,7 @@ class Announcement(Base):
     __tablename__ = "announcements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -187,7 +188,7 @@ class Poll(Base):
     __tablename__ = "polls"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     question: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     allow_multiple_choices: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -232,7 +233,7 @@ class PollVote(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     poll_id: Mapped[int] = mapped_column(ForeignKey("polls.id", ondelete="CASCADE"), index=True)
     choice_id: Mapped[int] = mapped_column(ForeignKey("poll_choices.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

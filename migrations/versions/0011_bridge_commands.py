@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("payload_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("status", sa.String(length=20), nullable=False, server_default="queued"),
         sa.Column("message", sa.Text(), nullable=True),
-        sa.Column("created_by_user_id", sa.Integer(), nullable=True),
+        sa.Column("created_by_user_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("executed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

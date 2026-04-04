@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,7 +140,7 @@ def _ensure_evaluation_complete(evaluation: Evaluation) -> None:
         raise ConflictError("Evaluation is incomplete. Answer all required fields before submitting.")
 
 
-def _assert_can_manage_evaluation(item: Evaluation, current_user_id: int, is_staff: bool) -> None:
+def _assert_can_manage_evaluation(item: Evaluation, current_user_id: UUID, is_staff: bool) -> None:
     if is_staff:
         return
     if item.evaluator_id != current_user_id:
@@ -253,7 +254,7 @@ def _normalize_statuses(
     return cleaned
 
 
-def _to_poll_read(poll: Poll, current_user_id: int | None = None) -> PollRead:
+def _to_poll_read(poll: Poll, current_user_id: UUID | None = None) -> PollRead:
     choice_reads: list[PollChoiceRead] = []
     for choice in sorted(poll.choices, key=lambda item: item.position):
         vote_count = sum(1 for vote in poll.votes if vote.choice_id == choice.id)
@@ -300,15 +301,15 @@ def _validate_poll_choices(choices: list[int], allow_multiple: bool) -> list[int
     return unique_choices
 
 
-def _resource_shared_user_ids(resource: SharedResource) -> list[int]:
+def _resource_shared_user_ids(resource: SharedResource) -> list[UUID]:
     return [item.user_id for item in resource.shares]
 
 
-def _resource_confidential_user_ids(resource: SharedResource) -> list[int]:
+def _resource_confidential_user_ids(resource: SharedResource) -> list[UUID]:
     return [item.user_id for item in resource.confidential_access]
 
 
-def _resource_can_be_seen_by(resource: SharedResource, user_id: int) -> bool:
+def _resource_can_be_seen_by(resource: SharedResource, user_id: UUID) -> bool:
     if resource.uploader_id == user_id:
         return True
     shared_user_ids = _resource_shared_user_ids(resource)
@@ -319,8 +320,15 @@ def _resource_can_be_seen_by(resource: SharedResource, user_id: int) -> bool:
     return user_id in _resource_confidential_user_ids(resource)
 
 
-def _resource_can_be_managed_by(resource: SharedResource, current_user_id: int, is_staff: bool) -> bool:
+def _resource_can_be_managed_by(resource: SharedResource, current_user_id: UUID, is_staff: bool) -> bool:
     return is_staff or resource.uploader_id == current_user_id
+
+
+def _normalized_uuid_list(values: list[UUID]) -> list[UUID]:
+    unique_by_value: dict[str, UUID] = {}
+    for value in values:
+        unique_by_value[str(value)] = value
+    return [unique_by_value[key] for key in sorted(unique_by_value)]
 
 
 def _to_shared_resource_read(resource: SharedResource) -> SharedResourceRead:
@@ -397,12 +405,12 @@ async def delete_questionnaire(session: AsyncSession, questionnaire_id: int) -> 
 
 async def list_user_evaluations(
     session: AsyncSession,
-    evaluatee_id: int | None = None,
+    evaluatee_id: UUID | None = None,
     questionnaire_id: int | None = None,
     quarter: str | None = None,
     year: int | None = None,
     is_finalized: bool | None = None,
-    current_user_id: int | None = None,
+    current_user_id: UUID | None = None,
     is_staff: bool = False,
 ) -> list[UserEvaluation]:
     items = await UserEvaluationRepository(session).list(
@@ -567,7 +575,7 @@ async def assign_user_evaluation_evaluator(
 async def unassign_user_evaluation_evaluator(
     session: AsyncSession,
     user_evaluation_id: int,
-    evaluator_id: int,
+    evaluator_id: UUID,
 ) -> None:
     user_evaluation_repository = UserEvaluationRepository(session)
     user_evaluation = await user_evaluation_repository.get_by_id(user_evaluation_id)
@@ -616,9 +624,9 @@ async def delete_user_evaluation(session: AsyncSession, user_evaluation_id: int)
 async def list_evaluations(
     session: AsyncSession,
     user_evaluation_id: int | None = None,
-    evaluator_id: int | None = None,
+    evaluator_id: UUID | None = None,
     is_submitted: bool | None = None,
-    current_user_id: int | None = None,
+    current_user_id: UUID | None = None,
     is_staff: bool = False,
 ) -> list[Evaluation]:
     evaluations = await EvaluationRepository(session).list(
@@ -641,7 +649,7 @@ async def list_evaluations(
 async def create_evaluation(
     session: AsyncSession,
     user_evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     payload: EvaluationCreateRequest,
     is_staff: bool = False,
 ) -> Evaluation:
@@ -695,7 +703,7 @@ async def update_evaluation(
     session: AsyncSession,
     evaluation_id: int,
     payload: EvaluationUpdateRequest,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> Evaluation:
     repository = EvaluationRepository(session)
@@ -716,7 +724,7 @@ async def update_evaluation(
 async def submit_evaluation(
     session: AsyncSession,
     evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> Evaluation:
     repository = EvaluationRepository(session)
@@ -742,7 +750,7 @@ async def submit_evaluation(
 async def reset_evaluation(
     session: AsyncSession,
     evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> Evaluation:
     repository = EvaluationRepository(session)
@@ -761,7 +769,7 @@ async def reset_evaluation(
 async def delete_evaluation(
     session: AsyncSession,
     evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> None:
     repository = EvaluationRepository(session)
@@ -775,7 +783,7 @@ async def delete_evaluation(
 async def get_evaluation_summary(
     session: AsyncSession,
     evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> EvaluationSummaryRead:
     repository = EvaluationRepository(session)
@@ -804,7 +812,7 @@ async def get_evaluation_summary(
 async def get_user_evaluation_aggregate_summary(
     session: AsyncSession,
     user_evaluation_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool = False,
 ) -> UserEvaluationAggregateRead:
     user_evaluation = await UserEvaluationRepository(session).get_by_id(user_evaluation_id)
@@ -939,7 +947,7 @@ async def list_announcements(
 
 async def create_announcement(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     payload: AnnouncementCreateRequest,
 ) -> Announcement:
     repository = AnnouncementRepository(session)
@@ -1045,7 +1053,7 @@ async def revert_announcement_to_draft(
 
 async def list_polls(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     statuses: list[str] | None = None,
 ) -> list[PollRead]:
     repository = PollRepository(session)
@@ -1060,7 +1068,7 @@ async def list_polls(
 
 async def create_poll(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     payload: PollCreateRequest,
 ) -> PollRead:
     repository = PollRepository(session)
@@ -1248,7 +1256,7 @@ async def remove_poll_choice(
 async def submit_poll_vote(
     session: AsyncSession,
     poll_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     payload: PollVoteSubmitRequest,
 ) -> PollRead:
     repository = PollRepository(session)
@@ -1289,7 +1297,7 @@ async def submit_poll_vote(
 async def get_poll_results(
     session: AsyncSession,
     poll_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
 ) -> PollRead:
     repository = PollRepository(session)
     poll = await repository.get_by_id(poll_id)
@@ -1300,7 +1308,7 @@ async def get_poll_results(
 
 async def list_feed(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     item_type: str | None = None,
     include_drafts: bool = False,
     include_archived: bool = False,
@@ -1353,8 +1361,8 @@ async def list_feed(
 
 async def list_shared_resources(
     session: AsyncSession,
-    current_user_id: int,
-    uploader_id: int | None = None,
+    current_user_id: UUID,
+    uploader_id: UUID | None = None,
     search: str | None = None,
 ) -> list[SharedResourceRead]:
     repository = SharedResourceRepository(session)
@@ -1369,14 +1377,14 @@ async def list_shared_resources(
 
 async def create_shared_resource(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     payload: SharedResourceCreateRequest,
 ) -> SharedResourceRead:
     user_repository = UserRepository(session)
     repository = SharedResourceRepository(session)
 
-    shared_user_ids = sorted(set(payload.shared_user_ids))
-    confidential_user_ids = sorted(set(payload.confidential_access_user_ids))
+    shared_user_ids = _normalized_uuid_list(payload.shared_user_ids)
+    confidential_user_ids = _normalized_uuid_list(payload.confidential_access_user_ids)
 
     for user_id in shared_user_ids + confidential_user_ids:
         if user_id == current_user_id:
@@ -1428,7 +1436,7 @@ async def update_shared_resource(
     session: AsyncSession,
     resource_id: int,
     payload: SharedResourceUpdateRequest,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> SharedResourceRead:
     repository = SharedResourceRepository(session)
@@ -1456,7 +1464,7 @@ async def update_shared_resource(
 async def delete_shared_resource(
     session: AsyncSession,
     resource_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> None:
     repository = SharedResourceRepository(session)
@@ -1471,13 +1479,13 @@ async def delete_shared_resource(
 
 async def create_shared_resource_from_upload(
     session: AsyncSession,
-    current_user_id: int,
+    current_user_id: UUID,
     uploaded_file: UploadFile,
     resource_name: str | None,
     description: str | None,
-    shared_user_ids: list[int],
+    shared_user_ids: list[UUID],
     is_confidential: bool,
-    confidential_access_user_ids: list[int],
+    confidential_access_user_ids: list[UUID],
 ) -> SharedResourceRead:
     if not uploaded_file.filename:
         raise ConflictError("Uploaded file must have a filename.")
@@ -1514,7 +1522,7 @@ async def create_shared_resource_from_upload(
 async def get_shared_resource_download_details(
     session: AsyncSession,
     resource_id: int,
-    current_user_id: int,
+    current_user_id: UUID,
 ) -> tuple[Path, str, str | None]:
     repository = SharedResourceRepository(session)
     resource = await repository.get_by_id(resource_id)
@@ -1531,8 +1539,8 @@ async def get_shared_resource_download_details(
 async def add_shared_resource_user_access(
     session: AsyncSession,
     resource_id: int,
-    user_id: int,
-    current_user_id: int,
+    user_id: UUID,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> SharedResourceRead:
     user_repository = UserRepository(session)
@@ -1565,8 +1573,8 @@ async def add_shared_resource_user_access(
 async def remove_shared_resource_user_access(
     session: AsyncSession,
     resource_id: int,
-    user_id: int,
-    current_user_id: int,
+    user_id: UUID,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> SharedResourceRead:
     repository = SharedResourceRepository(session)
@@ -1593,8 +1601,8 @@ async def remove_shared_resource_user_access(
 async def add_shared_resource_confidential_access(
     session: AsyncSession,
     resource_id: int,
-    user_id: int,
-    current_user_id: int,
+    user_id: UUID,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> SharedResourceRead:
     repository = SharedResourceRepository(session)
@@ -1632,8 +1640,8 @@ async def add_shared_resource_confidential_access(
 async def remove_shared_resource_confidential_access(
     session: AsyncSession,
     resource_id: int,
-    user_id: int,
-    current_user_id: int,
+    user_id: UUID,
+    current_user_id: UUID,
     is_staff: bool,
 ) -> SharedResourceRead:
     repository = SharedResourceRepository(session)

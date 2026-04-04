@@ -1,5 +1,6 @@
 from datetime import date, datetime, time
 from enum import Enum as PyEnum
+from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
@@ -65,7 +66,7 @@ class EmployeeShiftAssignment(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     shift_template_id: Mapped[int] = mapped_column("shift_id", ForeignKey("shifts.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -162,7 +163,7 @@ class AttendanceRecord(Base):
         TIME_OUT = "OUT"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     device_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     raw_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
@@ -186,8 +187,8 @@ class OvertimeRequest(Base):
         REJECTED = "REJ"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    approver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     info: Mapped[str | None] = mapped_column(Text, nullable=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[str] = mapped_column(
@@ -240,15 +241,15 @@ class ShiftSwapRequest(Base):
         REJECTED = "REJ"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    requested_for_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_for_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     current_schedule_id: Mapped[int] = mapped_column(
         ForeignKey("daily_shift_schedules.id"), index=True
     )
     requested_schedule_id: Mapped[int] = mapped_column(
         ForeignKey("daily_shift_schedules.id"), index=True
     )
-    approver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     info: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(4), default=Status.PENDING.value, nullable=False, index=True
@@ -287,7 +288,7 @@ class BridgeCommand(Base):
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True, default="queued")
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

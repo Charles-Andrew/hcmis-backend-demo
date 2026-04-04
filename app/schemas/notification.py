@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -6,8 +7,8 @@ from pydantic import ConfigDict
 
 class NotificationRead(BaseModel):
     id: int
-    recipient_id: int
-    sender_id: int | None = None
+    recipient_id: UUID
+    sender_id: UUID | None = None
     content: str
     url: str | None = None
     read: bool

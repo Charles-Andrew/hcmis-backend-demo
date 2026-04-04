@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -112,7 +113,7 @@ class Payslip(Base):
     __tablename__ = "payslips"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     rank: Mapped[str | None] = mapped_column(String(500), nullable=True)
     salary: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     period: Mapped[str | None] = mapped_column(String(3), nullable=True)
@@ -178,7 +179,7 @@ class ThirteenthMonthPay(Base):
     __tablename__ = "thirteenth_month_pays"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)

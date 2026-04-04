@@ -1,4 +1,5 @@
 from datetime import date
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,7 @@ async def read_daily_staffing_report(
 @router.get("/performance/employee-summary")
 async def read_employee_performance_summary(
     selected_year: int,
-    selected_user: int,
+    selected_user: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -63,7 +64,7 @@ async def read_yearly_salary_expense_report(
 @router.get("/payroll/employee-summary")
 async def read_employee_yearly_salary_summary_report(
     selected_year: int,
-    selected_user: int,
+    selected_user: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -74,7 +75,7 @@ async def read_employee_yearly_salary_summary_report(
 
 @router.get("/leave/employee-summary")
 async def read_employee_leave_summary_report(
-    selected_user: int,
+    selected_user: UUID,
     from_date: date,
     to_date: date,
     session: AsyncSession = Depends(get_db_session),

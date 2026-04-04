@@ -1,16 +1,19 @@
 from datetime import date, datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import EmailStr
 from pydantic import Field
+from pydantic import field_serializer
 from pydantic import field_validator
 
+from app.services.profile_photo_storage import get_profile_photo_read_url
 from app.schemas.department import DepartmentRead
 
 
 class UserRead(BaseModel):
-    id: int
+    id: UUID
     email: str
     first_name: str
     last_name: str
@@ -47,6 +50,10 @@ class UserRead(BaseModel):
         if value is None:
             return False
         return bool(value)
+
+    @field_serializer("profile_picture_url")
+    def serialize_profile_picture_url(self, value: str | None) -> str | None:
+        return get_profile_photo_read_url(value)
 
 
 class UserWithCapabilitiesRead(UserRead):

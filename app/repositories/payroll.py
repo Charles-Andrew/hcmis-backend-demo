@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -143,7 +145,7 @@ class PayslipRepository:
 
     async def list(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         month: int | None = None,
         year: int | None = None,
         period: str | None = None,
@@ -180,7 +182,7 @@ class PayslipRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_identity(self, user_id: int, month: int, year: int, period: str) -> Payslip | None:
+    async def get_by_identity(self, user_id: UUID, month: int, year: int, period: str) -> Payslip | None:
         result = await self.session.execute(
             select(Payslip).where(
                 Payslip.user_id == user_id,
@@ -255,7 +257,7 @@ class ThirteenthMonthPayRepository:
 
     async def list(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         month: int | None = None,
         year: int | None = None,
         released: bool | None = None,
@@ -291,7 +293,7 @@ class ThirteenthMonthPayRepository:
         return result.scalar_one_or_none()
 
     async def get_by_identity(
-        self, user_id: int, month: int, year: int
+        self, user_id: UUID, month: int, year: int
     ) -> ThirteenthMonthPay | None:
         result = await self.session.execute(
             select(ThirteenthMonthPay).where(

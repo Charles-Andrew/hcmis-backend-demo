@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -38,7 +39,7 @@ class QuestionnaireUpdateRequest(BaseModel):
 
 class UserEvaluationRead(BaseModel):
     id: int
-    evaluatee_id: int
+    evaluatee_id: UUID
     questionnaire_id: int
     quarter: str
     year: int
@@ -52,7 +53,7 @@ class UserEvaluationRead(BaseModel):
 
 
 class UserEvaluationCreateRequest(BaseModel):
-    evaluatee_id: int
+    evaluatee_id: UUID
     questionnaire_id: int
     quarter: str = Field(pattern="^(FQ|SQ)$")
     year: int = Field(ge=1)
@@ -67,7 +68,7 @@ class UserEvaluationUpdateRequest(BaseModel):
 
 class EvaluationRead(BaseModel):
     id: int
-    evaluator_id: int
+    evaluator_id: UUID
     user_evaluation_id: int
     questionnaire_id: int
     positive_feedback: str | None = None
@@ -83,7 +84,7 @@ class EvaluationRead(BaseModel):
 
 
 class EvaluationCreateRequest(BaseModel):
-    evaluator_id: int | None = None
+    evaluator_id: UUID | None = None
     positive_feedback: str | None = None
     improvement_suggestion: str | None = None
     content_data: list[dict] = Field(default_factory=list)
@@ -108,7 +109,7 @@ class EvaluationSummaryRead(BaseModel):
 
 
 class EvaluationAssignmentRequest(BaseModel):
-    evaluator_id: int
+    evaluator_id: UUID
 
 
 class UserEvaluationDomainSummaryRead(BaseModel):
@@ -119,7 +120,7 @@ class UserEvaluationDomainSummaryRead(BaseModel):
 
 class UserEvaluationAggregateRead(BaseModel):
     user_evaluation_id: int
-    evaluatee_id: int
+    evaluatee_id: UUID
     questionnaire_id: int
     quarter: str
     year: int
@@ -133,15 +134,15 @@ class UserEvaluationAggregateRead(BaseModel):
 
 class SharedResourceRead(BaseModel):
     id: int
-    uploader_id: int
+    uploader_id: UUID
     resource_name: str
     description: str | None = None
     original_filename: str
     content_type: str | None = None
     size_bytes: int
     is_confidential: bool
-    shared_user_ids: list[int] = Field(default_factory=list)
-    confidential_access_user_ids: list[int] = Field(default_factory=list)
+    shared_user_ids: list[UUID] = Field(default_factory=list)
+    confidential_access_user_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -155,9 +156,9 @@ class SharedResourceCreateRequest(BaseModel):
     original_filename: str = Field(min_length=1, max_length=255)
     content_type: str | None = Field(default=None, max_length=255)
     size_bytes: int = Field(default=0, ge=0)
-    shared_user_ids: list[int] = Field(default_factory=list)
+    shared_user_ids: list[UUID] = Field(default_factory=list)
     is_confidential: bool = False
-    confidential_access_user_ids: list[int] = Field(default_factory=list)
+    confidential_access_user_ids: list[UUID] = Field(default_factory=list)
 
 
 class SharedResourceUpdateRequest(BaseModel):
@@ -167,12 +168,12 @@ class SharedResourceUpdateRequest(BaseModel):
 
 
 class SharedResourceAccessUpdateRequest(BaseModel):
-    user_id: int
+    user_id: UUID
 
 
 class AnnouncementRead(BaseModel):
     id: int
-    author_id: int
+    author_id: UUID
     title: str
     summary: str | None = None
     content: str
@@ -213,7 +214,7 @@ class PollChoiceRead(BaseModel):
 
 class PollRead(BaseModel):
     id: int
-    author_id: int
+    author_id: UUID
     question: str
     description: str | None = None
     allow_multiple_choices: bool

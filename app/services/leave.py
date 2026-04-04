@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.capabilities import is_staff_user
@@ -38,9 +40,9 @@ def list_leave_types() -> list[dict[str, str]]:
 
 
 def _normalize_approval_chain(
-    first_approver_id: int | None, second_approver_id: int | None
-) -> tuple[int | None, int | None]:
-    chain: list[int] = []
+    first_approver_id: UUID | None, second_approver_id: UUID | None
+) -> tuple[UUID | None, UUID | None]:
+    chain: list[UUID] = []
     for approver_id in (first_approver_id, second_approver_id):
         if approver_id is not None and approver_id not in chain:
             chain.append(approver_id)
@@ -49,7 +51,7 @@ def _normalize_approval_chain(
     return first, second
 
 
-async def _ensure_leave_credit(session: AsyncSession, user_id: int) -> LeaveCredit:
+async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
     repository = LeaveCreditRepository(session)
     leave_credit = await repository.get_by_user_id(user_id)
     if leave_credit is None:
@@ -60,7 +62,7 @@ async def _ensure_leave_credit(session: AsyncSession, user_id: int) -> LeaveCred
 
 async def _get_approval_chain(
     session: AsyncSession, user: User
-) -> tuple[int | None, int | None]:
+) -> tuple[UUID | None, UUID | None]:
     if user.department_id is None:
         raise ConflictError("User is not assigned to a department.")
 
@@ -110,8 +112,8 @@ def _user_display_name(user: User) -> str:
 async def _notify_user(
     session: AsyncSession,
     *,
-    recipient_id: int | None,
-    sender_id: int | None,
+    recipient_id: UUID | None,
+    sender_id: UUID | None,
     content: str,
     url: str | None,
 ) -> None:
@@ -135,9 +137,9 @@ async def _notify_user(
 
 async def list_leave_requests(
     session: AsyncSession,
-    user_id: int | None = None,
+    user_id: UUID | None = None,
     department_id: int | None = None,
-    approver_id: int | None = None,
+    approver_id: UUID | None = None,
     status: str | None = None,
     year: int | None = None,
     month: int | None = None,
@@ -382,7 +384,7 @@ async def delete_leave_approver(session: AsyncSession, department_id: int) -> No
 
 
 async def list_leave_credits(
-    session: AsyncSession, user_id: int | None = None, department_id: int | None = None
+    session: AsyncSession, user_id: UUID | None = None, department_id: int | None = None
 ) -> list[LeaveCredit]:
     credits = await LeaveCreditRepository(session).list()
     if user_id is not None:
@@ -396,12 +398,12 @@ async def list_leave_credits(
     return credits
 
 
-async def get_my_leave_credit(session: AsyncSession, user_id: int) -> LeaveCredit:
+async def get_my_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
     return await _ensure_leave_credit(session, user_id)
 
 
 async def set_leave_credit(
-    session: AsyncSession, user_id: int, payload: LeaveCreditUpsertRequest
+    session: AsyncSession, user_id: UUID, payload: LeaveCreditUpsertRequest
 ) -> LeaveCredit:
     user = await UserRepository(session).get_by_id(user_id)
     if user is None:
@@ -433,7 +435,7 @@ async def set_leave_credit(
     return leave_credit
 
 
-async def reset_leave_credit(session: AsyncSession, user_id: int) -> LeaveCredit:
+async def reset_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
     user = await UserRepository(session).get_by_id(user_id)
     if user is None:
         raise NotFoundError("User not found.")

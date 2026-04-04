@@ -19,8 +19,8 @@ def upgrade() -> None:
     op.create_table(
         "messages",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("sender_id", sa.Integer(), nullable=False),
-        sa.Column("receiver_id", sa.Integer(), nullable=False),
+        sa.Column("sender_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("receiver_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("message", sa.Text(), nullable=True),
         sa.Column("seen", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

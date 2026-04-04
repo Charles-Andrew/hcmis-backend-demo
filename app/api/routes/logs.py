@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -15,7 +17,7 @@ router = APIRouter(prefix="/app-logs", tags=["app-logs"])
 @router.get("", response_model=list[AppLogRead])
 async def get_app_logs(
     selected_date: date | None = Query(default=None),
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> list[AppLog]:

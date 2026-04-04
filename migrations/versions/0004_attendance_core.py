@@ -102,7 +102,7 @@ def upgrade() -> None:
         "daily_shift_schedules",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
         sa.Column("date", sa.Date(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("shift_id", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
@@ -150,7 +150,7 @@ def upgrade() -> None:
     op.create_table(
         "attendance_records",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("device_user_id", sa.Integer(), nullable=True),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("punch", sa.String(length=6), nullable=False),
@@ -214,8 +214,8 @@ def upgrade() -> None:
     op.create_table(
         "overtime_requests",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("approver_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("approver_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("info", sa.Text(), nullable=True),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(length=4), nullable=False, server_default="PEND"),
@@ -252,11 +252,11 @@ def upgrade() -> None:
     op.create_table(
         "shift_swap_requests",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("requested_by_id", sa.Integer(), nullable=False),
-        sa.Column("requested_for_id", sa.Integer(), nullable=False),
+        sa.Column("requested_by_id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("requested_for_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("current_schedule_id", sa.Integer(), nullable=False),
         sa.Column("requested_schedule_id", sa.Integer(), nullable=False),
-        sa.Column("approver_id", sa.Integer(), nullable=False),
+        sa.Column("approver_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("info", sa.Text(), nullable=True),
         sa.Column("status", sa.String(length=4), nullable=False, server_default="PEND"),
         sa.Column(

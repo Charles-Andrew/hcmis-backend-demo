@@ -21,7 +21,7 @@ def upgrade() -> None:
     op.create_table(
         "app_logs",
         sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("details", sa.Text(), nullable=False),
         sa.Column(
             "created_at",

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +39,7 @@ async def queue_sync_users_command(
     session: AsyncSession,
     *,
     payload: BridgeCommandSyncUsersCreateRequest,
-    requested_by_user_id: int,
+    requested_by_user_id: UUID,
 ) -> BridgeCommandRead:
     command = await BridgeCommandRepository(session).create(
         site_code=payload.site_code,
@@ -53,7 +55,7 @@ async def queue_scan_users_command(
     session: AsyncSession,
     *,
     payload: BridgeCommandScanUsersCreateRequest,
-    requested_by_user_id: int,
+    requested_by_user_id: UUID,
 ) -> BridgeCommandRead:
     command = await BridgeCommandRepository(session).create(
         site_code=payload.site_code,

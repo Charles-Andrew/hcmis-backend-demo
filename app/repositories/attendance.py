@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import json
 from datetime import date, datetime
 
@@ -71,7 +73,7 @@ class AttendanceRecordRepository:
         self.session = session
 
     async def list_for_user_range(
-        self, user_id: int, start: datetime, end: datetime
+        self, user_id: UUID, start: datetime, end: datetime
     ) -> list[AttendanceRecord]:
         result = await self.session.execute(
             select(AttendanceRecord)
@@ -91,7 +93,7 @@ class AttendanceRecordRepository:
         return result.scalar_one_or_none()
 
     async def get_duplicate(
-        self, user_id: int, timestamp: datetime, punch: str
+        self, user_id: UUID, timestamp: datetime, punch: str
     ) -> AttendanceRecord | None:
         result = await self.session.execute(
             select(AttendanceRecord).where(
@@ -148,7 +150,7 @@ class EmployeeShiftAssignmentRepository:
         return list(result.scalars().all())
 
     async def list_for_user_month(
-        self, user_id: int, year: int, month: int
+        self, user_id: UUID, year: int, month: int
     ) -> list[EmployeeShiftAssignment]:
         result = await self.session.execute(
             select(EmployeeShiftAssignment)
@@ -177,7 +179,7 @@ class EmployeeShiftAssignmentRepository:
         return result.scalar_one_or_none()
 
     async def get_by_user_date(
-        self, user_id: int, selected_date: date
+        self, user_id: UUID, selected_date: date
     ) -> EmployeeShiftAssignment | None:
         result = await self.session.execute(
             select(EmployeeShiftAssignment).where(
@@ -289,13 +291,13 @@ class OvertimeRepository:
             selectinload(OvertimeRequest.approver),
         )
 
-    async def list_for_user(self, user_id: int) -> list[OvertimeRequest]:
+    async def list_for_user(self, user_id: UUID) -> list[OvertimeRequest]:
         statement = self._base_statement().where(OvertimeRequest.user_id == user_id)
         statement = statement.order_by(OvertimeRequest.date.desc(), OvertimeRequest.id.desc())
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
-    async def list_for_approver(self, approver_id: int) -> list[OvertimeRequest]:
+    async def list_for_approver(self, approver_id: UUID) -> list[OvertimeRequest]:
         statement = self._base_statement().where(OvertimeRequest.approver_id == approver_id)
         statement = statement.order_by(OvertimeRequest.date.desc(), OvertimeRequest.id.desc())
         result = await self.session.execute(statement)
@@ -304,8 +306,8 @@ class OvertimeRepository:
     async def list(
         self,
         *,
-        user_id: int | None = None,
-        approver_id: int | None = None,
+        user_id: UUID | None = None,
+        approver_id: UUID | None = None,
         year: int | None = None,
         month: int | None = None,
         status: str | None = None,
@@ -372,7 +374,7 @@ class ShiftSwapRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_for_user(self, user_id: int) -> list[ShiftSwapRequest]:
+    async def list_for_user(self, user_id: UUID) -> list[ShiftSwapRequest]:
         result = await self.session.execute(
             select(ShiftSwapRequest)
             .where(
@@ -383,7 +385,7 @@ class ShiftSwapRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_approver(self, approver_id: int) -> list[ShiftSwapRequest]:
+    async def list_for_approver(self, approver_id: UUID) -> list[ShiftSwapRequest]:
         result = await self.session.execute(
             select(ShiftSwapRequest)
             .where(ShiftSwapRequest.approver_id == approver_id)
@@ -424,7 +426,7 @@ class BridgeCommandRepository:
         device_id: str,
         command_type: str,
         payload: dict,
-        created_by_user_id: int | None,
+        created_by_user_id: UUID | None,
     ) -> BridgeCommand:
         command = BridgeCommand(
             site_code=site_code,

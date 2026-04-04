@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datetime import date
 
 from sqlalchemy import select
@@ -16,7 +18,7 @@ class ReportsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_user(self, user_id: int) -> User | None:
+    async def get_user(self, user_id: UUID) -> User | None:
         result = await self.session.execute(
             select(User).options(selectinload(User.department)).where(User.id == user_id)
         )
@@ -73,7 +75,7 @@ class ReportsRepository:
 
     async def list_leave_requests(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
     ) -> list[LeaveRequest]:
@@ -93,7 +95,7 @@ class ReportsRepository:
 
     async def list_payslips(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         year: int | None = None,
         released: bool | None = True,
     ) -> list[Payslip]:
@@ -117,7 +119,7 @@ class ReportsRepository:
 
     async def list_user_evaluations(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         year: int | None = None,
         finalized: bool | None = True,
     ) -> list[UserEvaluation]:

@@ -78,7 +78,7 @@ def upgrade() -> None:
     op.create_table(
         "mp2_users",
         sa.Column("mp2_id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.ForeignKeyConstraint(["mp2_id"], ["mp2_accounts.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("mp2_id", "user_id"),
@@ -101,7 +101,7 @@ def upgrade() -> None:
     op.create_table(
         "fixed_compensation_users",
         sa.Column("fixed_compensation_id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.ForeignKeyConstraint(["fixed_compensation_id"], ["fixed_compensations.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("fixed_compensation_id", "user_id"),
@@ -110,7 +110,7 @@ def upgrade() -> None:
     op.create_table(
         "payslips",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("rank", sa.String(length=500), nullable=True),
         sa.Column("salary", sa.Numeric(12, 2), nullable=True),
         sa.Column("period", sa.String(length=3), nullable=True),
@@ -164,7 +164,7 @@ def upgrade() -> None:
     op.create_table(
         "thirteenth_month_pays",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("amount", sa.Numeric(12, 2), nullable=True),
         sa.Column("month", sa.Integer(), nullable=True),
         sa.Column("year", sa.Integer(), nullable=True),

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,9 +77,9 @@ async def get_review_requests(
 
 @router.get("/requests", response_model=list[LeaveRequestRead])
 async def get_requests(
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     department_id: int | None = Query(default=None),
-    approver_id: int | None = Query(default=None),
+    approver_id: UUID | None = Query(default=None),
     status: str | None = Query(default=None),
     year: int | None = Query(default=None),
     month: int | None = Query(default=None),
@@ -160,7 +162,7 @@ async def get_my_credit(
 
 @router.get("/credits", response_model=list[LeaveCreditRead])
 async def get_credits(
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     department_id: int | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
@@ -170,7 +172,7 @@ async def get_credits(
 
 @router.put("/credits/{user_id}", response_model=LeaveCreditRead)
 async def put_credit(
-    user_id: int,
+    user_id: UUID,
     payload: LeaveCreditUpsertRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
@@ -180,7 +182,7 @@ async def put_credit(
 
 @router.post("/credits/{user_id}/reset", response_model=LeaveCreditRead)
 async def reset_credit(
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> LeaveCredit:

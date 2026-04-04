@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,8 +12,8 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    receiver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    sender_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    receiver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     seen: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

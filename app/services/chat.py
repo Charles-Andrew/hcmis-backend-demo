@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -21,7 +23,7 @@ async def list_chat_users(
 
 
 async def get_conversation(
-    session: AsyncSession, current_user: User, other_user_id: int
+    session: AsyncSession, current_user: User, other_user_id: UUID
 ) -> ConversationRead:
     user_repository = ChatUserRepository(session)
     other_user = await user_repository.get_by_id(other_user_id)
@@ -63,7 +65,7 @@ async def send_message(
 
 
 async def mark_conversation_seen(
-    session: AsyncSession, current_user: User, other_user_id: int
+    session: AsyncSession, current_user: User, other_user_id: UUID
 ) -> int:
     return await MessageRepository(session).mark_seen_between(other_user_id, current_user.id)
 

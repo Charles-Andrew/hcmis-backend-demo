@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datetime import UTC, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -521,7 +523,7 @@ async def remove_employee_shift_assignment(
 
 @router.get("/records", response_model=list[AttendanceRecordRead])
 async def get_records(
-    user_id: int = Query(...),
+    user_id: UUID = Query(...),
     year: int = Query(...),
     month: int = Query(...),
     session: AsyncSession = Depends(get_db_session),
@@ -618,8 +620,8 @@ async def remove_holiday(
 @router.get("/overtime", response_model=list[OvertimeRequestRead])
 async def get_overtime_requests(
     scope: OvertimeRequestScope | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    approver_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
+    approver_id: UUID | None = Query(default=None),
     year: int | None = Query(default=None, ge=1900),
     month: int | None = Query(default=None, ge=1, le=12),
     status: str | None = Query(default=None, pattern="^(PEND|APP|REJ)$"),
@@ -677,8 +679,8 @@ async def remove_overtime_request(
 
 @router.get("/shift-swaps", response_model=list[ShiftSwapRequestRead])
 async def get_shift_swaps(
-    user_id: int | None = Query(default=None),
-    approver_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
+    approver_id: UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> list[ShiftSwapRequest]:
@@ -727,7 +729,7 @@ async def get_my_attendance_summary(
 
 @router.get("/users/{user_id}/{year}/{month}", response_model=AttendanceSummaryRead)
 async def get_user_attendance_summary(
-    user_id: int,
+    user_id: UUID,
     year: int,
     month: int,
     session: AsyncSession = Depends(get_db_session),

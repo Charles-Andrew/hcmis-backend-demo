@@ -20,10 +20,10 @@ def upgrade() -> None:
         "leave_approvers",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("department_id", sa.Integer(), nullable=False),
-        sa.Column("department_approver_id", sa.Integer(), nullable=True),
-        sa.Column("director_approver_id", sa.Integer(), nullable=True),
-        sa.Column("president_approver_id", sa.Integer(), nullable=True),
-        sa.Column("hr_approver_id", sa.Integer(), nullable=True),
+        sa.Column("department_approver_id", sa.UUID(as_uuid=True), nullable=True),
+        sa.Column("director_approver_id", sa.UUID(as_uuid=True), nullable=True),
+        sa.Column("president_approver_id", sa.UUID(as_uuid=True), nullable=True),
+        sa.Column("hr_approver_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["department_id"], ["departments.id"]),
@@ -42,7 +42,7 @@ def upgrade() -> None:
 
     op.create_table(
         "leave_credits",
-        sa.Column("user_id", sa.Integer(), primary_key=True),
+        sa.Column("user_id", sa.UUID(as_uuid=True), primary_key=True),
         sa.Column("credits", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("used_credits", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -56,11 +56,11 @@ def upgrade() -> None:
     op.create_table(
         "leave_requests",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("leave_date", sa.Date(), nullable=False),
         sa.Column("leave_type", sa.String(length=2), nullable=False),
         sa.Column("info", sa.Text(), nullable=True),
-        sa.Column("first_approver_id", sa.Integer(), nullable=True),
+        sa.Column("first_approver_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column(
             "first_approver_status",
             sa.String(length=20),
@@ -68,7 +68,7 @@ def upgrade() -> None:
             server_default="PENDING",
         ),
         sa.Column("first_approver_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("second_approver_id", sa.Integer(), nullable=True),
+        sa.Column("second_approver_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("second_approver_status", sa.String(length=20), nullable=True),
         sa.Column("second_approver_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -127,7 +128,7 @@ async def _upsert_user(
 
 async def _upsert_leave_credit(
     session: AsyncSession,
-    user_id: int,
+    user_id: UUID,
     credits: int,
     used_credits: int,
 ) -> LeaveCredit:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List
+from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +67,7 @@ class UserEvaluationRepository:
 
     async def list(
         self,
-        evaluatee_id: int | None = None,
+        evaluatee_id: UUID | None = None,
         questionnaire_id: int | None = None,
         quarter: str | None = None,
         year: int | None = None,
@@ -111,7 +112,7 @@ class UserEvaluationRepository:
 
     async def get_by_identity(
         self,
-        evaluatee_id: int,
+        evaluatee_id: UUID,
         questionnaire_id: int,
         quarter: str,
         year: int,
@@ -149,7 +150,7 @@ class EvaluationRepository:
     async def list(
         self,
         user_evaluation_id: int | None = None,
-        evaluator_id: int | None = None,
+        evaluator_id: UUID | None = None,
         is_submitted: bool | None = None,
     ) -> List[Evaluation]:
         statement = (
@@ -191,7 +192,7 @@ class EvaluationRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_identity(self, user_evaluation_id: int, evaluator_id: int) -> Evaluation | None:
+    async def get_by_identity(self, user_evaluation_id: int, evaluator_id: UUID) -> Evaluation | None:
         result = await self.session.execute(
             select(Evaluation).where(
                 Evaluation.user_evaluation_id == user_evaluation_id,
@@ -222,8 +223,8 @@ class SharedResourceRepository:
 
     async def list_for_user(
         self,
-        user_id: int,
-        uploader_id: int | None = None,
+        user_id: UUID,
+        uploader_id: UUID | None = None,
         search: str | None = None,
     ) -> List[SharedResource]:
         statement = (
@@ -282,7 +283,7 @@ class SharedResourceRepository:
     async def get_share(
         self,
         resource_id: int,
-        user_id: int,
+        user_id: UUID,
     ) -> SharedResourceShare | None:
         result = await self.session.execute(
             select(SharedResourceShare).where(
@@ -295,7 +296,7 @@ class SharedResourceRepository:
     async def add_share(
         self,
         resource_id: int,
-        user_id: int,
+        user_id: UUID,
     ) -> SharedResourceShare:
         item = SharedResourceShare(resource_id=resource_id, user_id=user_id)
         self.session.add(item)
@@ -310,7 +311,7 @@ class SharedResourceRepository:
     async def get_confidential_access(
         self,
         resource_id: int,
-        user_id: int,
+        user_id: UUID,
     ) -> SharedResourceConfidentialAccess | None:
         result = await self.session.execute(
             select(SharedResourceConfidentialAccess).where(
@@ -323,7 +324,7 @@ class SharedResourceRepository:
     async def add_confidential_access(
         self,
         resource_id: int,
-        user_id: int,
+        user_id: UUID,
     ) -> SharedResourceConfidentialAccess:
         item = SharedResourceConfidentialAccess(resource_id=resource_id, user_id=user_id)
         self.session.add(item)
@@ -434,7 +435,7 @@ class PollRepository:
         await self.session.delete(item)
         await self.session.commit()
 
-    async def list_votes_for_user(self, poll_id: int, user_id: int) -> List[PollVote]:
+    async def list_votes_for_user(self, poll_id: int, user_id: UUID) -> List[PollVote]:
         result = await self.session.execute(
             select(PollVote).where(PollVote.poll_id == poll_id, PollVote.user_id == user_id)
         )

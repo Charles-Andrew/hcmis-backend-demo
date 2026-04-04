@@ -1,5 +1,6 @@
 from datetime import date, datetime, time
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -54,7 +55,7 @@ class ShiftTemplateUpdateRequest(BaseModel):
 
 class AttendanceRecordRead(BaseModel):
     id: int
-    user_id: int
+    user_id: UUID
     device_user_id: int | None = None
     raw_event_id: str | None = None
     timestamp: datetime
@@ -66,7 +67,7 @@ class AttendanceRecordRead(BaseModel):
 
 
 class AttendanceRecordCreateRequest(BaseModel):
-    user_id: int
+    user_id: UUID
     device_user_id: int | None = None
     raw_event_id: str | None = None
     timestamp: datetime
@@ -81,7 +82,7 @@ class AttendanceRecordUpdateRequest(BaseModel):
 class EmployeeShiftAssignmentRead(BaseModel):
     id: int
     date: date
-    user_id: int
+    user_id: UUID
     shift_id: int
     user: UserRead | None = None
     shift: ShiftTemplateRead | None = None
@@ -93,7 +94,7 @@ class EmployeeShiftAssignmentRead(BaseModel):
 
 class EmployeeShiftAssignmentCreateRequest(BaseModel):
     date: date
-    user_id: int
+    user_id: UUID
     shift_id: int
 
 
@@ -102,7 +103,7 @@ class EmployeeShiftAssignmentUpdateRequest(BaseModel):
 
 
 class EmployeeShiftAssignmentCopyPreviousMonthRequest(BaseModel):
-    user_id: int
+    user_id: UUID
     year: int
     month: int
 
@@ -113,7 +114,7 @@ class EmployeeShiftAssignmentCopyPreviousMonthResponse(BaseModel):
 
 
 class EmployeeShiftAssignmentGenerateMonthRequest(BaseModel):
-    user_id: int
+    user_id: UUID
     year: int
     month: int
     shift_id: int | None = None
@@ -180,8 +181,8 @@ class HolidayUpdateRequest(BaseModel):
 
 class OvertimeRequestRead(BaseModel):
     id: int
-    user_id: int
-    approver_id: int
+    user_id: UUID
+    approver_id: UUID
     info: str | None = None
     date: date
     status: str
@@ -196,8 +197,8 @@ class OvertimeRequestRead(BaseModel):
 
 
 class OvertimeRequestCreateRequest(BaseModel):
-    user_id: int
-    approver_id: int
+    user_id: UUID
+    approver_id: UUID
     info: str | None = None
     date: date
 
@@ -211,11 +212,11 @@ OvertimeRequestScope = Literal["mine", "approvals", "all"]
 
 class ShiftSwapRequestRead(BaseModel):
     id: int
-    requested_by_id: int
-    requested_for_id: int
+    requested_by_id: UUID
+    requested_for_id: UUID
     current_schedule_id: int
     requested_schedule_id: int
-    approver_id: int
+    approver_id: UUID
     info: str | None = None
     status: str
     created_at: datetime
@@ -225,11 +226,11 @@ class ShiftSwapRequestRead(BaseModel):
 
 
 class ShiftSwapRequestCreateRequest(BaseModel):
-    requested_by_id: int
-    requested_for_id: int
+    requested_by_id: UUID
+    requested_for_id: UUID
     current_schedule_id: int
     requested_schedule_id: int
-    approver_id: int
+    approver_id: UUID
     info: str | None = None
 
 
@@ -253,7 +254,7 @@ class AttendanceSummaryRead(BaseModel):
 
 
 class BridgeUserRead(BaseModel):
-    user_id: int
+    user_id: UUID
     biometric_uid: int
     first_name: str
     last_name: str
@@ -350,7 +351,7 @@ class BridgeBiometricSnapshotResponse(BaseModel):
 class BridgeReconcileRow(BaseModel):
     key: str
     biometric_uid: int | None = None
-    app_user_id: int | None = None
+    app_user_id: UUID | None = None
     app_name: str | None = None
     biometric_name: str | None = None
     present_in_app: bool

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +13,7 @@ class NotificationRepository:
 
     async def list_for_recipient(
         self,
-        recipient_id: int,
+        recipient_id: UUID,
         *,
         limit: int = 50,
         offset: int = 0,
@@ -30,7 +32,7 @@ class NotificationRepository:
         return list(result.scalars().all())
 
     async def get_for_recipient(
-        self, notification_id: int, recipient_id: int
+        self, notification_id: int, recipient_id: UUID
     ) -> Notification | None:
         statement = select(Notification).where(
             Notification.id == notification_id,
@@ -50,7 +52,7 @@ class NotificationRepository:
         await self.session.refresh(notification)
         return notification
 
-    async def mark_all_read_for_recipient(self, recipient_id: int) -> int:
+    async def mark_all_read_for_recipient(self, recipient_id: UUID) -> int:
         unread_count = await self.count_unread_for_recipient(recipient_id)
         if unread_count == 0:
             return 0
@@ -64,7 +66,7 @@ class NotificationRepository:
         await self.session.commit()
         return unread_count
 
-    async def count_unread_for_recipient(self, recipient_id: int) -> int:
+    async def count_unread_for_recipient(self, recipient_id: UUID) -> int:
         statement = select(func.count()).select_from(Notification).where(
             Notification.recipient_id == recipient_id,
             Notification.read.is_(False),

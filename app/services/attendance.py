@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from calendar import monthrange, day_name
 from datetime import UTC, date, datetime
 from typing import Literal
@@ -423,7 +425,7 @@ async def update_employee_shift_assignment(
 
 
 async def list_attendance_records(
-    session: AsyncSession, user_id: int, year: int, month: int
+    session: AsyncSession, user_id: UUID, year: int, month: int
 ) -> list[AttendanceRecord]:
     start, end = _month_window(year, month)
     start_dt = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
@@ -547,11 +549,11 @@ async def delete_holiday(session: AsyncSession, holiday_id: int) -> str:
 async def list_overtime_requests(
     session: AsyncSession,
     *,
-    current_user_id: int,
+    current_user_id: UUID,
     current_user_is_staff: bool,
     scope: OvertimeRequestScope | None = None,
-    user_id: int | None = None,
-    approver_id: int | None = None,
+    user_id: UUID | None = None,
+    approver_id: UUID | None = None,
     year: int | None = None,
     month: int | None = None,
     status: str | None = None,
@@ -630,7 +632,7 @@ async def create_overtime_request(
 async def respond_to_overtime_request(
     session: AsyncSession,
     overtime_id: int,
-    approver_id: int,
+    approver_id: UUID,
     payload: OvertimeRequestRespondRequest,
 ) -> OvertimeRequest:
     repository = OvertimeRepository(session)
@@ -669,7 +671,7 @@ async def delete_overtime_request(session: AsyncSession, overtime_id: int) -> No
 
 
 async def list_shift_swap_requests(
-    session: AsyncSession, user_id: int | None = None, approver_id: int | None = None
+    session: AsyncSession, user_id: UUID | None = None, approver_id: UUID | None = None
 ) -> list[ShiftSwapRequest]:
     repository = ShiftSwapRepository(session)
     if user_id is not None:
@@ -684,7 +686,7 @@ async def create_shift_swap_request(
 ) -> ShiftSwapRequest:
     user_repository = UserRepository(session)
     schedule_repository = EmployeeShiftAssignmentRepository(session)
-    users: dict[int, User] = {}
+    users: dict[UUID, User] = {}
     for user_id in (payload.requested_by_id, payload.requested_for_id, payload.approver_id):
         user = await user_repository.get_by_id(user_id)
         if user is None:
@@ -731,7 +733,7 @@ async def create_shift_swap_request(
 async def respond_to_shift_swap_request(
     session: AsyncSession,
     swap_id: int,
-    approver_id: int,
+    approver_id: UUID,
     payload: ShiftSwapRequestRespondRequest,
 ) -> ShiftSwapRequest:
     repository = ShiftSwapRepository(session)
@@ -773,7 +775,7 @@ async def delete_shift_swap_request(session: AsyncSession, swap_id: int) -> None
 
 
 async def get_attendance_summary(
-    session: AsyncSession, user_id: int, year: int, month: int
+    session: AsyncSession, user_id: UUID, year: int, month: int
 ) -> AttendanceSummaryRead:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)

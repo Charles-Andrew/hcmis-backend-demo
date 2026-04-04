@@ -19,7 +19,7 @@ def upgrade() -> None:
     op.create_table(
         "announcements",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("author_id", sa.Integer(), nullable=False),
+        sa.Column("author_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("summary", sa.Text(), nullable=True),
         sa.Column("content", sa.Text(), nullable=False),
@@ -36,7 +36,7 @@ def upgrade() -> None:
     op.create_table(
         "polls",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("author_id", sa.Integer(), nullable=False),
+        sa.Column("author_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("question", sa.String(length=255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("allow_multiple_choices", sa.Boolean(), nullable=False, server_default=sa.false()),
@@ -69,7 +69,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("poll_id", sa.Integer(), nullable=False),
         sa.Column("choice_id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["poll_id"], ["polls.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["choice_id"], ["poll_choices.id"], ondelete="CASCADE"),

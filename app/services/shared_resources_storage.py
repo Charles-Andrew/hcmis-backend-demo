@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
 
@@ -101,7 +101,7 @@ def validate_uploaded_resource_file(uploaded_file: UploadFile) -> str:
 
 
 async def save_uploaded_resource_file(
-    uploader_id: int,
+    uploader_id: UUID,
     uploaded_file: UploadFile,
 ) -> StoredResourceFile:
     original_filename = validate_uploaded_resource_file(uploaded_file)

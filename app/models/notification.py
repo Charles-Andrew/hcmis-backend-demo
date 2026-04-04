@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,8 +12,8 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    sender_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    recipient_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    sender_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

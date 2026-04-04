@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -202,7 +204,7 @@ async def remove_fixed_compensation(
 
 @router.get("/payslips", response_model=list[PayslipRead])
 async def read_payslips(
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     month: int | None = Query(default=None),
     year: int | None = Query(default=None),
     period: str | None = Query(default=None),
@@ -306,7 +308,7 @@ async def remove_payslip_variable_deduction_route(
 
 @router.get("/thirteenth-month-pays", response_model=list[ThirteenthMonthPayRead])
 async def read_thirteenth_month_pays(
-    user_id: int | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     month: int | None = Query(default=None),
     year: int | None = Query(default=None),
     released: bool | None = Query(default=None),

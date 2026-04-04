@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,7 +64,7 @@ async def post_user(
 
 @router.get("/{user_id}", response_model=UserRead)
 async def get_user_by_id(
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> User:
@@ -71,7 +73,7 @@ async def get_user_by_id(
 
 @router.patch("/{user_id}", response_model=UserRead)
 async def patch_user(
-    user_id: int,
+    user_id: UUID,
     payload: UserUpdateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
@@ -81,7 +83,7 @@ async def patch_user(
 
 @router.post("/{user_id}/toggle-status", response_model=UserRead)
 async def post_toggle_user_status(
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> User:
@@ -90,7 +92,7 @@ async def post_toggle_user_status(
 
 @router.patch("/{user_id}/biometric", response_model=UserRead)
 async def patch_user_biometric_uid(
-    user_id: int,
+    user_id: UUID,
     payload: UserBiometricUpdateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
@@ -100,7 +102,7 @@ async def patch_user_biometric_uid(
 
 @router.post("/{user_id}/reset-password", response_model=UserPasswordResetResponse)
 async def post_reset_user_password(
-    user_id: int,
+    user_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> UserPasswordResetResponse:

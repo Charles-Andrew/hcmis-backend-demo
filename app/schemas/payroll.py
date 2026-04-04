@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -33,7 +34,7 @@ class Mp2Read(BaseModel):
 
 class Mp2UpdateRequest(BaseModel):
     amount: Decimal = Field(ge=0)
-    user_ids: list[int] = Field(default_factory=list)
+    user_ids: list[UUID] = Field(default_factory=list)
 
 
 class PayrollSettingUpdateRequest(BaseModel):
@@ -84,11 +85,11 @@ class FixedCompensationUpsertRequest(BaseModel):
     amount: Decimal = Field(ge=0)
     month: int
     year: int
-    user_ids: list[int] = Field(default_factory=list)
+    user_ids: list[UUID] = Field(default_factory=list)
 
 
 class FixedCompensationUsersRequest(BaseModel):
-    user_ids: list[int] = Field(default_factory=list)
+    user_ids: list[UUID] = Field(default_factory=list)
 
 
 class PayslipVariableCompensationRead(BaseModel):
@@ -125,7 +126,7 @@ class PayslipVariableDeductionUpsertRequest(BaseModel):
 
 class PayslipRead(BaseModel):
     id: int
-    user_id: int
+    user_id: UUID
     rank: str | None = None
     salary: Decimal | None = None
     period: str | None = None
@@ -143,7 +144,7 @@ class PayslipRead(BaseModel):
 
 
 class PayslipCreateRequest(BaseModel):
-    user_id: int
+    user_id: UUID
     month: int
     year: int
     period: str = Field(pattern="^(1ST|2ND)$")
@@ -189,7 +190,7 @@ class ThirteenthMonthPayVariableDeductionUpsertRequest(BaseModel):
 
 class ThirteenthMonthPayRead(BaseModel):
     id: int
-    user_id: int
+    user_id: UUID
     amount: Decimal | None = None
     month: int | None = None
     year: int | None = None
@@ -206,7 +207,7 @@ class ThirteenthMonthPayRead(BaseModel):
 
 
 class ThirteenthMonthPayCreateRequest(BaseModel):
-    user_id: int
+    user_id: UUID
     amount: Decimal = Field(ge=0)
     month: int
     year: int

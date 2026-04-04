@@ -3,6 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date
 from typing import List
+from uuid import UUID
 
 from sqlalchemy import extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,7 +82,7 @@ class LeaveCreditRepository:
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
-    async def get_by_user_id(self, user_id: int) -> LeaveCredit | None:
+    async def get_by_user_id(self, user_id: UUID) -> LeaveCredit | None:
         statement = (
             select(LeaveCredit)
             .options(selectinload(LeaveCredit.user).selectinload(User.department))
@@ -115,9 +116,9 @@ class LeaveRequestRepository:
 
     async def list(
         self,
-        user_id: int | None = None,
+        user_id: UUID | None = None,
         department_id: int | None = None,
-        approver_id: int | None = None,
+        approver_id: UUID | None = None,
         status: str | None = None,
         year: int | None = None,
         month: int | None = None,

@@ -34,7 +34,7 @@ def upgrade() -> None:
     op.create_table(
         "user_evaluations",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("evaluatee_id", sa.Integer(), nullable=False),
+        sa.Column("evaluatee_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("questionnaire_id", sa.Integer(), nullable=False),
         sa.Column("quarter", sa.String(length=2), nullable=False),
         sa.Column("year", sa.Integer(), nullable=False),
@@ -69,7 +69,7 @@ def upgrade() -> None:
     op.create_table(
         "evaluations",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("evaluator_id", sa.Integer(), nullable=False),
+        sa.Column("evaluator_id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("user_evaluation_id", sa.Integer(), nullable=False),
         sa.Column("questionnaire_id", sa.Integer(), nullable=False),
         sa.Column("positive_feedback", sa.Text(), nullable=True),

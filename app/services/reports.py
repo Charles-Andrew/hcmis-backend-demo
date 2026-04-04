@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -213,7 +214,7 @@ async def get_daily_staffing_report(
 
 
 async def get_employee_performance_summary(
-    session: AsyncSession, selected_year: int, selected_user: int, current_user: User
+    session: AsyncSession, selected_year: int, selected_user: UUID, current_user: User
 ) -> dict:
     report_repo = ReportsRepository(session)
     if not is_staff_user(current_user) and current_user.id != selected_user:
@@ -271,7 +272,7 @@ async def get_yearly_salary_expense_report(session: AsyncSession, selected_year:
 
 
 async def get_employee_yearly_salary_summary_report(
-    session: AsyncSession, selected_year: int, selected_user: int, current_user: User
+    session: AsyncSession, selected_year: int, selected_user: UUID, current_user: User
 ) -> dict:
     report_repo = ReportsRepository(session)
     if not is_staff_user(current_user) and current_user.id != selected_user:
@@ -300,7 +301,7 @@ async def get_employee_yearly_salary_summary_report(
 
 async def get_employee_leave_summary_report(
     session: AsyncSession,
-    selected_user: int,
+    selected_user: UUID,
     from_date: date | str,
     to_date: date | str,
     current_user: User,

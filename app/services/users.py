@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datetime import UTC, datetime, timedelta
 
 from fastapi import UploadFile
@@ -30,7 +32,7 @@ async def list_users(
     active_only: bool | None = None,
     include_superusers: bool = False,
     exclude_hr: bool = False,
-    exclude_user_id: int | None = None,
+    exclude_user_id: UUID | None = None,
 ) -> list[User]:
     repository = UserRepository(session)
     return await repository.list(
@@ -103,7 +105,7 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         raise ConflictError("User already exists.") from exc
 
 
-async def get_user(session: AsyncSession, user_id: int) -> User:
+async def get_user(session: AsyncSession, user_id: UUID) -> User:
     repository = UserRepository(session)
     user = await repository.get_by_id(user_id)
     if user is None:
@@ -112,7 +114,7 @@ async def get_user(session: AsyncSession, user_id: int) -> User:
 
 
 async def update_user(
-    session: AsyncSession, user_id: int, payload: UserUpdateRequest
+    session: AsyncSession, user_id: UUID, payload: UserUpdateRequest
 ) -> User:
     user_repository = UserRepository(session)
     department_repository = DepartmentRepository(session)
@@ -137,7 +139,7 @@ async def update_user(
     return await user_repository.save(user)
 
 
-async def toggle_user_status(session: AsyncSession, user_id: int) -> User:
+async def toggle_user_status(session: AsyncSession, user_id: UUID) -> User:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)
     if user is None:
@@ -156,7 +158,7 @@ async def toggle_user_status(session: AsyncSession, user_id: int) -> User:
 
 
 async def update_own_profile(
-    session: AsyncSession, user_id: int, payload: UserProfileUpdateRequest
+    session: AsyncSession, user_id: UUID, payload: UserProfileUpdateRequest
 ) -> User:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)
@@ -172,7 +174,7 @@ async def update_own_profile(
 
 async def upload_own_profile_photo(
     session: AsyncSession,
-    user_id: int,
+    user_id: UUID,
     uploaded_file: UploadFile,
     *,
     request_base_url: str,
@@ -203,7 +205,7 @@ async def upload_own_profile_photo(
 
 
 async def update_user_biometric_uid(
-    session: AsyncSession, user_id: int, payload: UserBiometricUpdateRequest
+    session: AsyncSession, user_id: UUID, payload: UserBiometricUpdateRequest
 ) -> User:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)
@@ -225,7 +227,7 @@ async def update_user_biometric_uid(
 
 async def reset_user_password(
     session: AsyncSession,
-    user_id: int,
+    user_id: UUID,
 ) -> tuple[User, str]:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)
