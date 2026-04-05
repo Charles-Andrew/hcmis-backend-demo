@@ -17,7 +17,7 @@ from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest
 from app.models.performance import Evaluation, Questionnaire, UserEvaluation
 from app.models.payroll import (
     FixedCompensation,
-    Job,
+    Position,
     Mp2Account,
     PayrollSetting,
     Payslip,
@@ -44,7 +44,7 @@ __all__ = [
     "LeaveRequest",
     "Evaluation",
     "FixedCompensation",
-    "Job",
+    "Position",
     "Mp2Account",
     "PayrollSetting",
     "Payslip",

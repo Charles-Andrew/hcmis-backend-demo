@@ -10,7 +10,7 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.time import utc_now
 from app.models.payroll import (
     FixedCompensation,
-    Job,
+    Position,
     Mp2Account,
     PayrollSetting,
     Payslip,
@@ -19,11 +19,12 @@ from app.models.payroll import (
     ThirteenthMonthPay,
     ThirteenthMonthPayVariableDeduction,
 )
+from app.models.department import Department
 from app.models.user import User
 from app.repositories.departments import DepartmentRepository
 from app.repositories.payroll import (
     FixedCompensationRepository,
-    JobRepository,
+    PositionRepository,
     Mp2Repository,
     PayrollSettingRepository,
     PayslipRepository,
@@ -37,7 +38,7 @@ from app.services.notifications import create_notification_if_possible
 from app.schemas.payroll import (
     FixedCompensationUpsertRequest,
     FixedCompensationUsersRequest,
-    JobUpsertRequest,
+    PositionUpsertRequest,
     PayrollSettingUpdateRequest,
     PayslipCreateRequest,
     PayslipUpdateRequest,
@@ -94,7 +95,7 @@ def _to_decimal(value: Decimal | int | str | float | None) -> Decimal:
 
 
 def _month_period_pattern() -> re.Pattern[str]:
-    return re.compile(r"^(?P<job_code>[A-Z0-9]+)-(?P<rank>\d+)(?: - STEP (?P<step>\d+))?$")
+    return re.compile(r"^(?P<position_code>[A-Z0-9]+)-(?P<rank>\d+)(?: - STEP (?P<step>\d+))?$")
 
 
 async def get_settings(session: AsyncSession) -> PayrollSetting:
@@ -108,7 +109,7 @@ async def get_settings(session: AsyncSession) -> PayrollSetting:
             basic_salary_multiplier=Decimal("1.0000"),
             basic_salary_step_multiplier=Decimal("1.0000"),
             basic_salary_steps=10,
-            max_job_rank=10,
+            max_position_rank=10,
         )
         return await repository.create(settings)
     return settings
@@ -174,63 +175,72 @@ def _salary_steps(settings: PayrollSetting, base_salary: Decimal) -> list[dict[s
     return steps
 
 
-async def list_jobs(session: AsyncSession, department_id: int | None = None) -> list[Job]:
-    return await JobRepository(session).list(department_id=department_id)
+async def list_positions(session: AsyncSession, department_id: int | None = None) -> list[Position]:
+    return await PositionRepository(session).list(department_id=department_id)
 
 
-async def create_job(session: AsyncSession, payload: JobUpsertRequest) -> Job:
-    repository = JobRepository(session)
+async def _resolve_departments(
+    session: AsyncSession, department_ids: list[int]
+) -> list[Department]:
+    department_repository = DepartmentRepository(session)
+    departments = []
+    for department_id in dict.fromkeys(department_ids):
+        department = await department_repository.get_by_id(department_id)
+        if department is None:
+            raise NotFoundError("Department not found.")
+        departments.append(department)
+    return departments
+
+
+async def create_position(session: AsyncSession, payload: PositionUpsertRequest) -> Position:
+    repository = PositionRepository(session)
     if await repository.get_by_code(payload.code):
-        raise ConflictError("Job code already exists.")
-    job = Job(
+        raise ConflictError("Position code already exists.")
+    position = Position(
         title=payload.title,
         code=payload.code.upper(),
         salary_grade=payload.salary_grade,
         is_active=payload.is_active,
     )
-    created = await repository.create(job)
+    created = await repository.create(position)
     if payload.department_ids:
-        department_repository = DepartmentRepository(session)
-        departments = []
-        for department_id in payload.department_ids:
-            department = await department_repository.get_by_id(department_id)
-            if department is None:
-                raise NotFoundError("Department not found.")
-            departments.append(department)
+        departments = await _resolve_departments(session, payload.department_ids)
         created.departments = departments
         created = await repository.save(created)
-    return created
+    hydrated = await repository.get_by_id(created.id)
+    if hydrated is None:
+        raise NotFoundError("Position not found.")
+    return hydrated
 
 
-async def update_job(session: AsyncSession, job_id: int, payload: JobUpsertRequest) -> Job:
-    repository = JobRepository(session)
-    job = await repository.get_by_id(job_id)
-    if job is None:
-        raise NotFoundError("Job not found.")
+async def update_position(
+    session: AsyncSession, position_id: int, payload: PositionUpsertRequest
+) -> Position:
+    repository = PositionRepository(session)
+    position = await repository.get_by_id(position_id)
+    if position is None:
+        raise NotFoundError("Position not found.")
     existing = await repository.get_by_code(payload.code)
-    if existing is not None and existing.id != job_id:
-        raise ConflictError("Job code already exists.")
-    job.title = payload.title
-    job.code = payload.code.upper()
-    job.salary_grade = payload.salary_grade
-    job.is_active = payload.is_active
-    department_repository = DepartmentRepository(session)
-    departments = []
-    for department_id in payload.department_ids:
-        department = await department_repository.get_by_id(department_id)
-        if department is None:
-            raise NotFoundError("Department not found.")
-        departments.append(department)
-    job.departments = departments
-    return await repository.save(job)
+    if existing is not None and existing.id != position_id:
+        raise ConflictError("Position code already exists.")
+    position.title = payload.title
+    position.code = payload.code.upper()
+    position.salary_grade = payload.salary_grade
+    position.is_active = payload.is_active
+    position.departments = await _resolve_departments(session, payload.department_ids)
+    saved = await repository.save(position)
+    hydrated = await repository.get_by_id(saved.id)
+    if hydrated is None:
+        raise NotFoundError("Position not found.")
+    return hydrated
 
 
-async def delete_job(session: AsyncSession, job_id: int) -> None:
-    repository = JobRepository(session)
-    job = await repository.get_by_id(job_id)
-    if job is None:
-        raise NotFoundError("Job not found.")
-    await repository.delete(job)
+async def delete_position(session: AsyncSession, position_id: int) -> None:
+    repository = PositionRepository(session)
+    position = await repository.get_by_id(position_id)
+    if position is None:
+        raise NotFoundError("Position not found.")
+    await repository.delete(position)
 
 
 async def list_fixed_compensations(
@@ -318,19 +328,24 @@ async def _current_salary_for_user(session: AsyncSession, user: User) -> tuple[s
     if not user.rank or user.department_id is None:
         return None, None
     settings = await get_settings(session)
-    job_code_match = _month_period_pattern().match(user.rank)
-    if job_code_match is None:
+    position_code_match = _month_period_pattern().match(user.rank)
+    if position_code_match is None:
         return user.rank, None
-    job_code = job_code_match.group("job_code")
-    rank = int(job_code_match.group("rank"))
-    step = job_code_match.group("step")
-    job = await JobRepository(session).get_by_code(job_code)
-    if job is None:
+    position_code = position_code_match.group("position_code")
+    rank = int(position_code_match.group("rank"))
+    if rank < 1 or rank > settings.max_position_rank:
         return user.rank, None
-    grade = job.salary_grade + max(rank - 1, 0)
+    step = position_code_match.group("step")
+    step_number = int(step) if step is not None else None
+    if step_number is not None and (step_number < 1 or step_number > settings.basic_salary_steps):
+        return user.rank, None
+    position = await PositionRepository(session).get_by_code(position_code)
+    if position is None:
+        return user.rank, None
+    grade = position.salary_grade + max(rank - 1, 0)
     base_salary = _salary_grade_amount(settings, grade)
-    if step:
-        for _ in range(int(step)):
+    if step_number is not None:
+        for _ in range(step_number):
             base_salary *= _to_decimal(settings.basic_salary_step_multiplier)
     return user.rank, base_salary.quantize(Decimal("0.01"))
 
@@ -469,8 +484,10 @@ async def get_payslip_summary(session: AsyncSession, payslip_id: int) -> dict:
     gross_per_cutoff = gross_pay / Decimal("2")
     mandatory = _compute_deductions(settings, gross_pay)
     mandatory_total = sum(mandatory.values(), Decimal("0.00"))
-    total_deductions = variable_ded_total if payslip.period == "1ST" else variable_ded_total + mandatory_total
     mp2_deduction = await _mp2_deduction_for_user(session, payslip.user)
+    total_deductions = variable_ded_total
+    if payslip.period == "2ND":
+        total_deductions += mandatory_total + mp2_deduction
     return {
         "period": payslip.period,
         "salary": base_salary / Decimal("2") if base_salary else None,

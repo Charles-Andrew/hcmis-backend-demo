@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import re
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -10,6 +11,31 @@ from pydantic import field_validator
 
 from app.services.profile_photo_storage import get_profile_photo_read_url
 from app.schemas.department import DepartmentRead
+
+RANK_PATTERN = re.compile(
+    r"^(?P<position_code>[A-Z0-9]+)-(?P<rank>\d+)(?:\s*-\s*STEP\s*(?P<step>\d+))?$"
+)
+
+
+def normalize_rank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if normalized == "":
+        return None
+    match = RANK_PATTERN.match(normalized)
+    if match is None:
+        raise ValueError("Rank must follow CODE-RANK or CODE-RANK - STEP N format.")
+    rank = int(match.group("rank"))
+    if rank < 1:
+        raise ValueError("Rank number must be at least 1.")
+    step = match.group("step")
+    if step is None:
+        return f"{match.group('position_code')}-{rank}"
+    step_number = int(step)
+    if step_number < 1:
+        raise ValueError("Step number must be at least 1.")
+    return f"{match.group('position_code')}-{rank} - STEP {step_number}"
 
 
 class UserRead(BaseModel):
@@ -85,6 +111,11 @@ class UserCreateRequest(BaseModel):
     is_active: bool = True
     is_superuser: bool = False
 
+    @field_validator("rank", mode="before")
+    @classmethod
+    def normalize_rank_value(cls, value: str | None) -> str | None:
+        return normalize_rank(value)
+
 
 class UserUpdateRequest(BaseModel):
     first_name: str | None = None
@@ -109,6 +140,11 @@ class UserUpdateRequest(BaseModel):
     is_active: bool | None = None
     is_superuser: bool | None = None
 
+    @field_validator("rank", mode="before")
+    @classmethod
+    def normalize_rank_value(cls, value: str | None) -> str | None:
+        return normalize_rank(value)
+
 
 class UserBiometricUpdateRequest(BaseModel):
     biometric_uid: int | None = None
@@ -128,3 +164,8 @@ class UserProfileUpdateRequest(BaseModel):
     date_of_birth: date | None = None
     date_of_hiring: date | None = None
     profile_picture_url: str | None = None
+
+    @field_validator("rank", mode="before")
+    @classmethod
+    def normalize_rank_value(cls, value: str | None) -> str | None:
+        return normalize_rank(value)

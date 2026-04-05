@@ -3,14 +3,15 @@ from decimal import Decimal
 from typing import cast
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
 from app.models.department import Department
-from app.models.payroll import FixedCompensation, Job, PayrollSetting, Payslip, ThirteenthMonthPay
+from app.models.payroll import FixedCompensation, Position, PayrollSetting, Payslip, ThirteenthMonthPay
 from app.models.user import User
 from app.schemas.payroll import (
-    JobUpsertRequest,
+    PositionUpsertRequest,
     PayrollSettingUpdateRequest,
     PayslipCreateRequest,
     PayslipVariableCompensationUpsertRequest,
@@ -81,40 +82,44 @@ class FakeMp2Repository:
         return mp2
 
 
-class FakeJobRepository:
-    jobs: dict[int, Job] = {}
+class FakePositionRepository:
+    positions: dict[int, Position] = {}
     next_id = 1
 
     def __init__(self, session):
         self.session = session
 
     async def list(self, department_id=None):
-        jobs = list(self.jobs.values())
+        positions = list(self.positions.values())
         if department_id is not None:
-            jobs = [job for job in jobs if any(dep.id == department_id for dep in job.departments)]
-        return jobs
+            positions = [
+                position
+                for position in positions
+                if any(dep.id == department_id for dep in position.departments)
+            ]
+        return positions
 
-    async def get_by_id(self, job_id: int):
-        return self.jobs.get(job_id)
+    async def get_by_id(self, position_id: int):
+        return self.positions.get(position_id)
 
     async def get_by_code(self, code: str):
-        for job in self.jobs.values():
-            if job.code.lower() == code.lower():
-                return job
+        for position in self.positions.values():
+            if position.code.lower() == code.lower():
+                return position
         return None
 
-    async def create(self, job: Job):
-        job.id = self.next_id
+    async def create(self, position: Position):
+        position.id = self.next_id
         self.next_id += 1
-        self.jobs[job.id] = job
-        return job
+        self.positions[position.id] = position
+        return position
 
-    async def save(self, job: Job):
-        self.jobs[job.id] = job
-        return job
+    async def save(self, position: Position):
+        self.positions[position.id] = position
+        return position
 
-    async def delete(self, job: Job):
-        self.jobs.pop(job.id, None)
+    async def delete(self, position: Position):
+        self.positions.pop(position.id, None)
 
 
 class FakeFixedCompensationRepository:
@@ -276,8 +281,8 @@ class FakeThirteenthMonthPayVariableDeductionRepository(FakePayslipVariableCompe
 def _reset():
     FakePayrollSettingRepository.setting = None
     FakeMp2Repository.mp2 = None
-    FakeJobRepository.jobs = {}
-    FakeJobRepository.next_id = 1
+    FakePositionRepository.positions = {}
+    FakePositionRepository.next_id = 1
     FakeFixedCompensationRepository.items = {}
     FakeFixedCompensationRepository.next_id = 1
     FakePayslipRepository.items = {}
@@ -297,9 +302,9 @@ def _reset():
 def _seed():
     dept = Department(id=1, name="Operations", code="OPS", is_active=True, workweek=[])
     FakeDepartmentRepository.departments[1] = dept
-    job = Job(id=1, title="Operations Staff", code="OPS", salary_grade=1, is_active=True)
-    job.departments = [dept]
-    FakeJobRepository.jobs[1] = job
+    position = Position(id=1, title="Operations Staff", code="OPS", salary_grade=1, is_active=True)
+    position.departments = [dept]
+    FakePositionRepository.positions[1] = position
     user = User(
         id=UUID(int=1),
         email="employee@example.com",
@@ -324,19 +329,19 @@ def _seed():
         basic_salary_multiplier=Decimal("1.0000"),
         basic_salary_step_multiplier=Decimal("1.0000"),
         basic_salary_steps=2,
-        max_job_rank=3,
+        max_position_rank=3,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
     FakeMp2Repository.mp2 = None
 
 
-def test_payroll_settings_and_jobs(monkeypatch):
+def test_payroll_settings_and_positions(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
-    monkeypatch.setattr(payroll_service, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
 
@@ -350,12 +355,33 @@ def test_payroll_settings_and_jobs(monkeypatch):
     )
     assert updated.minimum_wage_amount == Decimal("1200.00")
 
-    job = anyio.run(
-        payroll_service.create_job,
+    position = anyio.run(
+        payroll_service.create_position,
         cast(AsyncSession, object()),
-        JobUpsertRequest(title="Staff", code="STAFF", salary_grade=1, department_ids=[1]),
+        PositionUpsertRequest(title="Staff", code="STAFF", salary_grade=1, department_ids=[1]),
     )
-    assert job.code == "STAFF"
+    assert position.code == "STAFF"
+
+
+def test_position_request_normalizes_and_validates_code():
+    payload = PositionUpsertRequest(
+        title="  Staff  ",
+        code=" ops1 ",
+        salary_grade=1,
+        department_ids=[1],
+    )
+    assert payload.title == "Staff"
+    assert payload.code == "OPS1"
+
+    try:
+        PositionUpsertRequest(
+            title="Staff",
+            code="OPS-1",
+            salary_grade=1,
+        )
+        raise AssertionError("Expected validation error for invalid position code.")
+    except ValidationError:
+        pass
 
 
 def test_payslip_calculation_and_variable_adjustments(monkeypatch):
@@ -363,7 +389,7 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
-    monkeypatch.setattr(payroll_service, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(payroll_service, "FixedCompensationRepository", FakeFixedCompensationRepository)
@@ -414,12 +440,32 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
     assert summary["net_salary"] is not None
 
 
+def test_payslip_salary_is_none_when_rank_exceeds_max_position_rank(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+
+    user = FakeUserRepository.users[UUID(int=1)]
+    user.rank = "OPS-4"
+
+    payslip = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
+    )
+    assert payslip.rank == "OPS-4"
+    assert payslip.salary is None
+
+
 def test_mp2_update_and_summary_deduction(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
-    monkeypatch.setattr(payroll_service, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(payroll_service, "FixedCompensationRepository", FakeFixedCompensationRepository)
@@ -461,6 +507,7 @@ def test_mp2_update_and_summary_deduction(monkeypatch):
         payslip.id,
     )
     assert summary["mp2_deduction"] == Decimal("123.45")
+    assert summary["total_deductions"] == Decimal("123.45")
 
 
 def test_thirteenth_month_pay_flow(monkeypatch):
@@ -468,7 +515,7 @@ def test_thirteenth_month_pay_flow(monkeypatch):
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
-    monkeypatch.setattr(payroll_service, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(payroll_service, "ThirteenthMonthPayRepository", FakeThirteenthMonthPayRepository)

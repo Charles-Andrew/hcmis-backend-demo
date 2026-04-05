@@ -34,9 +34,19 @@ def test_core_routes_are_registered():
     assert "/leave/requests/review" in paths
     assert "/leave/approvers" in paths
     assert "/leave/credits/me" in paths
-    assert "/payroll/settings" in paths
-    assert "/payroll/jobs" in paths
+    assert "/payroll/policy-versions" in paths
+    assert "/payroll/policy-versions/seed-ph-baseline" in paths
+    assert "/payroll/policy-versions/seed-ph-official-core" in paths
+    assert "/payroll/policy-versions/{policy_version_id}/rules" in paths
+    assert "/payroll/policy-versions/{policy_version_id}/sources" in paths
+    assert "/payroll/runs" in paths
+    assert "/payroll/runs/{payroll_run_id}/validate" in paths
+    assert "/payroll/runs/{payroll_run_id}/post" in paths
+    assert "/payroll/runs/{payroll_run_id}/release" in paths
+    assert "/payroll/runs/{payroll_run_id}/items" in paths
+    assert "/payroll/positions" in paths
     assert "/payroll/payslips" in paths
+    assert "/payroll/payslips/{payslip_id}/summary-comparison" in paths
     assert "/payroll/thirteenth-month-pays" in paths
     assert "/performance/questionnaires" in paths
     assert "/performance/user-evaluations" in paths

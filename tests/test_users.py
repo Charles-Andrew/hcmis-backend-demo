@@ -2,6 +2,7 @@ import anyio
 from typing import cast
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -278,6 +279,17 @@ def test_update_user_missing_department_raises(monkeypatch):
         assert exc.detail == "Department not found."
     else:
         raise AssertionError("Expected NotFoundError to be raised")
+
+
+def test_user_update_request_normalizes_and_validates_rank():
+    payload = UserUpdateRequest(rank=" ops-2 - step 3 ")
+    assert payload.rank == "OPS-2 - STEP 3"
+
+    try:
+        UserUpdateRequest(rank="Supervisor")
+        raise AssertionError("Expected ValidationError for invalid rank format.")
+    except ValidationError:
+        pass
 
 
 def test_toggle_user_status_flips_active_flag(monkeypatch):

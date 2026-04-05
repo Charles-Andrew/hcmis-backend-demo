@@ -2,6 +2,7 @@ import anyio
 from typing import cast
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
@@ -91,7 +92,7 @@ def test_update_profile_updates_allowed_fields(monkeypatch):
             first_name="Updated",
             last_name="Person",
             phone_number="09171234567",
-            rank="Supervisor",
+            rank="ops-1 - step 2",
             gender="M",
         ),
     )
@@ -99,5 +100,13 @@ def test_update_profile_updates_allowed_fields(monkeypatch):
     assert response.first_name == "Updated"
     assert response.last_name == "Person"
     assert response.phone_number == "09171234567"
-    assert response.rank == "Supervisor"
+    assert response.rank == "OPS-1 - STEP 2"
     assert response.gender == "M"
+
+
+def test_profile_update_request_rejects_invalid_rank():
+    try:
+        UserProfileUpdateRequest(rank="Supervisor")
+        raise AssertionError("Expected ValidationError for invalid rank format.")
+    except ValidationError:
+        pass
