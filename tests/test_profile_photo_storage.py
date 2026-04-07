@@ -1,5 +1,6 @@
 from io import BytesIO
 from uuid import UUID
+from typing import cast
 
 import anyio
 import pytest
@@ -8,11 +9,16 @@ from starlette.datastructures import Headers
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError
-from app.services.profile_photo_storage import get_profile_photo_read_url, save_profile_photo
+from app.services.profile_photo_storage import (
+    delete_profile_photo_by_url,
+    get_profile_photo_read_url,
+    save_profile_photo,
+)
+from botocore.exceptions import ClientError
 
 
 def test_save_profile_photo_rejects_invalid_extension(monkeypatch):
-    monkeypatch.setattr(settings, "profile_photos_storage_backend", "filesystem")
+    monkeypatch.setattr(settings, "profile_photos_s3_bucket", "avatars")
 
     file = UploadFile(
         filename="avatar.txt",
@@ -24,22 +30,32 @@ def test_save_profile_photo_rejects_invalid_extension(monkeypatch):
         await save_profile_photo(
             UUID(int=1),
             file,
-            request_base_url="http://localhost:8000/",
         )
 
     with pytest.raises(ConflictError, match="Unsupported image format"):
         anyio.run(_save)
 
 
-def test_save_profile_photo_in_filesystem_mode(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "profile_photos_storage_backend", "filesystem")
+def test_save_profile_photo_uploads_to_s3(monkeypatch):
+    monkeypatch.setattr(settings, "profile_photos_s3_bucket", "avatars")
+    monkeypatch.setattr(settings, "profile_photos_max_file_size_mb", 5)
+    monkeypatch.setattr(settings, "profile_photos_s3_prefix", "profile-photos")
     monkeypatch.setattr(
         settings,
-        "profile_photos_storage_dir",
-        str(tmp_path / "profile-photos"),
+        "profile_photos_s3_public_base_url",
+        "https://project.supabase.co/storage/v1/object/public/avatars",
     )
-    monkeypatch.setattr(settings, "profile_photos_max_file_size_mb", 5)
-    monkeypatch.setattr(settings, "profile_photos_public_base_url", "")
+
+    captured: dict[str, object] = {}
+
+    class FakeS3Client:
+        def put_object(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "app.services.profile_photo_storage._build_s3_client",
+        lambda: FakeS3Client(),
+    )
 
     payload = b"fake-image-bytes"
     file = UploadFile(
@@ -52,25 +68,20 @@ def test_save_profile_photo_in_filesystem_mode(tmp_path, monkeypatch):
         return await save_profile_photo(
             UUID(int=42),
             file,
-            request_base_url="http://localhost:8000/",
         )
 
     stored = anyio.run(_save)
 
-    assert stored.storage_key.startswith(f"{UUID(int=42)}/")
-    assert stored.url.startswith(f"http://localhost:8000/profile/photos/{UUID(int=42)}/")
+    assert stored.storage_key.startswith(f"profile-photos/{UUID(int=42)}/")
+    assert stored.url.startswith("https://project.supabase.co/storage/v1/object/public/avatars/")
     assert stored.size_bytes == len(payload)
-
-
-def test_get_profile_photo_read_url_returns_same_url_for_filesystem(monkeypatch):
-    monkeypatch.setattr(settings, "profile_photos_storage_backend", "filesystem")
-    url = "http://localhost:8000/profile/photos/42/avatar.png"
-
-    assert get_profile_photo_read_url(url) == url
+    assert captured["Bucket"] == "avatars"
+    assert captured["Key"] == stored.storage_key
+    assert captured["ContentType"] == "image/png"
+    assert cast(BytesIO, captured["Body"]).read() == payload
 
 
 def test_get_profile_photo_read_url_generates_s3_signed_url(monkeypatch):
-    monkeypatch.setattr(settings, "profile_photos_storage_backend", "s3")
     monkeypatch.setattr(settings, "profile_photos_s3_bucket", "avatars")
     monkeypatch.setattr(
         settings,
@@ -112,3 +123,34 @@ def test_get_profile_photo_read_url_generates_s3_signed_url(monkeypatch):
         "Key": f"profile-photos/{user_id}/avatar.png",
     }
     assert captured["ExpiresIn"] == 600
+
+
+def test_delete_profile_photo_by_url_ignores_missing_object(monkeypatch):
+    monkeypatch.setattr(settings, "profile_photos_s3_bucket", "avatars")
+    monkeypatch.setattr(
+        settings,
+        "profile_photos_s3_public_base_url",
+        "https://project.supabase.co/storage/v1/object/public/avatars",
+    )
+
+    class FakeS3Client:
+        def delete_object(self, **kwargs: object) -> None:
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "NoSuchKey",
+                        "Message": "Object not found",
+                    }
+                },
+                "DeleteObject",
+            )
+
+    monkeypatch.setattr(
+        "app.services.profile_photo_storage._build_s3_client",
+        lambda: FakeS3Client(),
+    )
+
+    delete_profile_photo_by_url(
+        "https://project.supabase.co/storage/v1/object/public/avatars/"
+        "profile-photos/00000000-0000-0000-0000-000000000001/avatar.png"
+    )
