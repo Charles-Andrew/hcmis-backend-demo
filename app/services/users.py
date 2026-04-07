@@ -176,8 +176,6 @@ async def upload_own_profile_photo(
     session: AsyncSession,
     user_id: UUID,
     uploaded_file: UploadFile,
-    *,
-    request_base_url: str,
 ) -> User:
     user_repository = UserRepository(session)
     user = await user_repository.get_by_id(user_id)
@@ -188,7 +186,6 @@ async def upload_own_profile_photo(
     stored_photo = await save_profile_photo(
         user_id=user_id,
         uploaded_file=uploaded_file,
-        request_base_url=request_base_url,
     )
     user.profile_picture_url = stored_photo.url
 

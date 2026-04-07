@@ -21,7 +21,7 @@ from app.models.performance import Questionnaire  # noqa: F401
 from app.models.performance import UserEvaluation  # noqa: F401
 from app.models.payroll import FixedCompensation  # noqa: F401
 from app.models.payroll import Position  # noqa: F401
-from app.models.payroll import Mp2Account  # noqa: F401
+from app.models.payroll import Mp2Enrollment  # noqa: F401
 from app.models.payroll import PayrollSetting  # noqa: F401
 from app.models.payroll import Payslip  # noqa: F401
 from app.models.payroll import PayslipVariableCompensation  # noqa: F401

@@ -28,13 +28,6 @@ position_departments = Table(
     Column("department_id", ForeignKey("departments.id"), primary_key=True),
 )
 
-mp2_users = Table(
-    "mp2_users",
-    Base.metadata,
-    Column("mp2_id", ForeignKey("mp2_accounts.id"), primary_key=True),
-    Column("user_id", ForeignKey("users.id"), primary_key=True),
-)
-
 fixed_compensation_users = Table(
     "fixed_compensation_users",
     Base.metadata,
@@ -66,21 +59,30 @@ class PayrollSetting(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-
-class Mp2Account(Base):
-    __tablename__ = "mp2_accounts"
+class Mp2Enrollment(Base):
+    __tablename__ = "mp2_enrollments"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'ended')", name="ck_mp2_enrollments_status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     amount: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), default=Decimal("0.00"), nullable=False
     )
-    users = relationship("User", secondary=mp2_users)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    mp2_account_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+    user = relationship("User")
 
 
 class Position(Base):
@@ -271,14 +273,39 @@ class PolicySssBracket(Base):
     policy_version_id: Mapped[int] = mapped_column(
         ForeignKey("payroll_policy_versions.id"), nullable=False, index=True
     )
-    min_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    max_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    employee_share: Mapped[Decimal] = mapped_column(
+    legacy_min_compensation: Mapped[Decimal] = mapped_column(
+        "min_compensation", Numeric(12, 2), nullable=False
+    )
+    legacy_max_compensation: Mapped[Decimal] = mapped_column(
+        "max_compensation", Numeric(12, 2), nullable=False
+    )
+    legacy_employee_share: Mapped[Decimal] = mapped_column(
+        "employee_share", Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    legacy_employer_share: Mapped[Decimal] = mapped_column(
+        "employer_share", Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    compensation_range_from: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    compensation_range_to: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    monthly_salary_credit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False
+    )
+    employee_contribution: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), default=Decimal("0.00"), nullable=False
     )
-    employer_share: Mapped[Decimal] = mapped_column(
+    employer_contribution: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), default=Decimal("0.00"), nullable=False
     )
+    ec_contribution: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    mpf_employee_contribution: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    mpf_employer_contribution: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -294,12 +321,23 @@ class PolicyPhilhealthRule(Base):
     policy_version_id: Mapped[int] = mapped_column(
         ForeignKey("payroll_policy_versions.id"), nullable=False, index=True
     )
-    min_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    max_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    legacy_min_compensation: Mapped[Decimal] = mapped_column(
+        "min_compensation", Numeric(12, 2), nullable=False
+    )
+    legacy_max_compensation: Mapped[Decimal] = mapped_column(
+        "max_compensation", Numeric(12, 2), nullable=False
+    )
+    legacy_rate: Mapped[Decimal] = mapped_column("rate", Numeric(8, 6), nullable=False)
+    compensation_range_from: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    compensation_range_to: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    premium_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
     employee_share_ratio: Mapped[Decimal] = mapped_column(
         Numeric(8, 6), default=Decimal("0.500000"), nullable=False
     )
+    employer_share_ratio: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), default=Decimal("0.500000"), nullable=False
+    )
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -315,14 +353,30 @@ class PolicyPagibigRule(Base):
     policy_version_id: Mapped[int] = mapped_column(
         ForeignKey("payroll_policy_versions.id"), nullable=False, index=True
     )
-    min_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
-    monthly_compensation_cap: Mapped[Decimal] = mapped_column(
+    legacy_min_compensation: Mapped[Decimal] = mapped_column(
+        "min_compensation", Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    legacy_monthly_compensation_cap: Mapped[Decimal] = mapped_column(
+        "monthly_compensation_cap", Numeric(12, 2), nullable=False
+    )
+    legacy_max_employee_share: Mapped[Decimal | None] = mapped_column(
+        "max_employee_share", Numeric(12, 2), nullable=True
+    )
+    legacy_max_employer_share: Mapped[Decimal | None] = mapped_column(
+        "max_employer_share", Numeric(12, 2), nullable=True
+    )
+    compensation_range_from: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    compensation_range_to: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    compensation_cap: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False
     )
     employee_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
     employer_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
-    max_employee_share: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    max_employer_share: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    employee_share_cap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    employer_share_cap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -339,13 +393,23 @@ class PolicyBirWithholdingBracket(Base):
         ForeignKey("payroll_policy_versions.id"), nullable=False, index=True
     )
     payroll_period: Mapped[str] = mapped_column(String(20), nullable=False)
-    min_compensation: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    max_compensation: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    legacy_min_compensation: Mapped[Decimal] = mapped_column(
+        "min_compensation", Numeric(12, 2), nullable=False
+    )
+    legacy_max_compensation: Mapped[Decimal | None] = mapped_column(
+        "max_compensation", Numeric(12, 2), nullable=True
+    )
+    compensation_range_from: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    compensation_range_to: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     base_tax: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), default=Decimal("0.00"), nullable=False
     )
     marginal_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
-    over_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    legacy_over_amount: Mapped[Decimal] = mapped_column(
+        "over_amount", Numeric(12, 2), nullable=False
+    )
+    excess_over: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -357,7 +421,13 @@ class PolicyBirWithholdingBracket(Base):
 class PolicyMinimumWageOrder(Base):
     __tablename__ = "policy_min_wage_orders"
     __table_args__ = (
-        UniqueConstraint("region_code", "effective_from", name="uq_min_wage_region_effective"),
+        UniqueConstraint(
+            "policy_version_id",
+            "region_code",
+            "sector",
+            "effective_from",
+            name="uq_min_wage_policy_region_sector_effective",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -366,7 +436,10 @@ class PolicyMinimumWageOrder(Base):
     )
     region_code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     sector: Mapped[str] = mapped_column(String(50), default="GENERAL", nullable=False)
-    daily_wage_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    legacy_daily_wage_amount: Mapped[Decimal] = mapped_column(
+        "daily_wage_amount", Numeric(12, 2), nullable=False
+    )
+    daily_rate: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -405,6 +478,10 @@ class PayrollRun(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
+    inputs = relationship(
+        "PayrollRunInput", back_populates="payroll_run", cascade="all, delete-orphan"
+    )
+
 
 class PayrollRunItem(Base):
     __tablename__ = "payroll_run_items"
@@ -429,6 +506,101 @@ class PayrollRunItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+
+class PayrollItemType(Base):
+    __tablename__ = "payroll_item_types"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_payroll_item_types_code"),
+        CheckConstraint(
+            "category IN ('earning', 'deduction')",
+            name="ck_payroll_item_types_category",
+        ),
+        CheckConstraint(
+            "behavior IN ('fixed', 'formula', 'variable')",
+            name="ck_payroll_item_types_behavior",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    behavior: Mapped[str] = mapped_column(String(20), default="variable", nullable=False)
+    taxable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    run_inputs = relationship("PayrollRunInput", back_populates="item_type")
+
+
+class PayrollRunInput(Base):
+    __tablename__ = "payroll_run_inputs"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('manual', 'import', 'system')",
+            name="ck_payroll_run_inputs_source",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'approved')",
+            name="ck_payroll_run_inputs_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    payroll_run_id: Mapped[int] = mapped_column(
+        ForeignKey("payroll_runs.id"), nullable=False, index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    payroll_item_type_id: Mapped[int] = mapped_column(
+        ForeignKey("payroll_item_types.id"), nullable=False, index=True
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    remarks: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    payroll_run = relationship("PayrollRun", back_populates="inputs")
+    item_type = relationship("PayrollItemType", back_populates="run_inputs")
+    user = relationship("User", foreign_keys=[user_id])
+    creator = relationship("User", foreign_keys=[created_by])
+    approver = relationship("User", foreign_keys=[approved_by])
+    audits = relationship(
+        "PayrollRunInputAudit", back_populates="run_input", cascade="all, delete-orphan"
+    )
+
+
+class PayrollRunInputAudit(Base):
+    __tablename__ = "payroll_run_input_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    payroll_run_input_id: Mapped[int] = mapped_column(
+        ForeignKey("payroll_run_inputs.id"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+    run_input = relationship("PayrollRunInput", back_populates="audits")
+    actor = relationship("User")
 
 
 class PayrollAdjustment(Base):
@@ -471,9 +643,12 @@ class PayrollPolicySource(Base):
     policy_version_id: Mapped[int] = mapped_column(
         ForeignKey("payroll_policy_versions.id"), nullable=False, index=True
     )
-    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    legacy_source_type: Mapped[str] = mapped_column("source_type", String(50), nullable=False)
+    document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     reference_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    published_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     applied_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)

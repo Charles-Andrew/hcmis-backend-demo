@@ -18,7 +18,7 @@ from app.models.performance import Evaluation, Questionnaire, UserEvaluation
 from app.models.payroll import (
     FixedCompensation,
     Position,
-    Mp2Account,
+    Mp2Enrollment,
     PayrollSetting,
     Payslip,
     PayslipVariableCompensation,
@@ -45,7 +45,7 @@ __all__ = [
     "Evaluation",
     "FixedCompensation",
     "Position",
-    "Mp2Account",
+    "Mp2Enrollment",
     "PayrollSetting",
     "Payslip",
     "Questionnaire",

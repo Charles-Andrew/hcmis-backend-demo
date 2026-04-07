@@ -230,6 +230,7 @@ class SharedResourceRepository:
         statement = (
             select(SharedResource)
             .options(
+                selectinload(SharedResource.uploader),
                 selectinload(SharedResource.shares),
                 selectinload(SharedResource.confidential_access),
             )
@@ -258,6 +259,7 @@ class SharedResourceRepository:
         result = await self.session.execute(
             select(SharedResource)
             .options(
+                selectinload(SharedResource.uploader),
                 selectinload(SharedResource.shares),
                 selectinload(SharedResource.confidential_access),
             )

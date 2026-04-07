@@ -1,4 +1,5 @@
 import anyio
+from datetime import date
 from decimal import Decimal
 from typing import cast
 from uuid import UUID
@@ -8,9 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
 from app.models.department import Department
-from app.models.payroll import FixedCompensation, Position, PayrollSetting, Payslip, ThirteenthMonthPay
+from app.models.payroll import (
+    FixedCompensation,
+    Mp2Enrollment,
+    PayrollSetting,
+    Payslip,
+    Position,
+    ThirteenthMonthPay,
+)
 from app.models.user import User
 from app.schemas.payroll import (
+    Mp2EnrollmentCreateRequest,
     PositionUpsertRequest,
     PayrollSettingUpdateRequest,
     PayslipCreateRequest,
@@ -63,23 +72,45 @@ class FakePayrollSettingRepository:
         self.setting = settings
         return settings
 
-
-class FakeMp2Repository:
-    mp2 = None
+class FakeMp2EnrollmentRepository:
+    items: dict[int, Mp2Enrollment] = {}
+    next_id = 1
 
     def __init__(self, session):
         self.session = session
 
-    async def get_first(self):
-        return FakeMp2Repository.mp2
+    async def list(self, status=None):
+        items = list(self.items.values())
+        if status is not None:
+            items = [item for item in items if item.status == status]
+        return items
 
-    async def create(self, mp2):
-        FakeMp2Repository.mp2 = mp2
-        return mp2
+    async def get_by_id(self, enrollment_id: int):
+        return self.items.get(enrollment_id)
 
-    async def save(self, mp2):
-        FakeMp2Repository.mp2 = mp2
-        return mp2
+    async def get_active_for_user_on(self, user_id: UUID, effective_date):
+        candidates = [
+            item
+            for item in self.items.values()
+            if item.user_id == user_id
+            and item.status == "active"
+            and item.effective_from <= effective_date
+            and (item.effective_to is None or item.effective_to >= effective_date)
+        ]
+        candidates.sort(key=lambda item: (item.effective_from, item.id), reverse=True)
+        return candidates[0] if candidates else None
+
+    async def create(self, enrollment: Mp2Enrollment):
+        enrollment.id = self.next_id
+        self.next_id += 1
+        enrollment.user = FakeUserRepository.users.get(enrollment.user_id)
+        self.items[enrollment.id] = enrollment
+        return enrollment
+
+    async def save(self, enrollment: Mp2Enrollment):
+        enrollment.user = FakeUserRepository.users.get(enrollment.user_id)
+        self.items[enrollment.id] = enrollment
+        return enrollment
 
 
 class FakePositionRepository:
@@ -280,7 +311,8 @@ class FakeThirteenthMonthPayVariableDeductionRepository(FakePayslipVariableCompe
 
 def _reset():
     FakePayrollSettingRepository.setting = None
-    FakeMp2Repository.mp2 = None
+    FakeMp2EnrollmentRepository.items = {}
+    FakeMp2EnrollmentRepository.next_id = 1
     FakePositionRepository.positions = {}
     FakePositionRepository.next_id = 1
     FakeFixedCompensationRepository.items = {}
@@ -333,14 +365,12 @@ def _seed():
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    FakeMp2Repository.mp2 = None
 
 
 def test_payroll_settings_and_positions(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
-    monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
@@ -388,7 +418,7 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
-    monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
+    monkeypatch.setattr(payroll_service, "Mp2EnrollmentRepository", FakeMp2EnrollmentRepository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
@@ -460,11 +490,11 @@ def test_payslip_salary_is_none_when_rank_exceeds_max_position_rank(monkeypatch)
     assert payslip.salary is None
 
 
-def test_mp2_update_and_summary_deduction(monkeypatch):
+def test_mp2_enrollment_and_summary_deduction(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
-    monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
+    monkeypatch.setattr(payroll_service, "Mp2EnrollmentRepository", FakeMp2EnrollmentRepository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
@@ -473,16 +503,19 @@ def test_mp2_update_and_summary_deduction(monkeypatch):
     monkeypatch.setattr(payroll_service, "PayslipVariableCompensationRepository", FakePayslipVariableCompensationRepository)
     monkeypatch.setattr(payroll_service, "PayslipVariableDeductionRepository", FakePayslipVariableDeductionRepository)
 
-    async def _update_mp2():
-        return await payroll_service.update_mp2(
+    async def _create_mp2_enrollment():
+        return await payroll_service.create_mp2_enrollment(
             cast(AsyncSession, object()),
-            amount=Decimal("123.45"),
-            user_ids=[UUID(int=1)],
+            Mp2EnrollmentCreateRequest(
+                user_id=UUID(int=1),
+                amount=Decimal("123.45"),
+                effective_from=date(2026, 1, 1),
+            ),
         )
 
-    mp2 = anyio.run(_update_mp2)
-    assert mp2.amount == Decimal("123.45")
-    assert mp2.users[0].id == UUID(int=1)
+    mp2_enrollment = anyio.run(_create_mp2_enrollment)
+    assert mp2_enrollment.amount == Decimal("123.45")
+    assert mp2_enrollment.user_id == UUID(int=1)
 
     fixed = FixedCompensation(
         id=1,
@@ -514,7 +547,6 @@ def test_thirteenth_month_pay_flow(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
-    monkeypatch.setattr(payroll_service, "Mp2Repository", FakeMp2Repository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)

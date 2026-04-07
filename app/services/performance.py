@@ -37,7 +37,7 @@ from app.services.notifications import (
 )
 from app.services.shared_resources_storage import (
     delete_stored_resource_file,
-    get_stored_resource_file_path,
+    get_stored_resource_download_url,
     save_uploaded_resource_file,
 )
 from app.schemas.performance import (
@@ -58,6 +58,7 @@ from app.schemas.performance import (
     PollVoteSubmitRequest,
     QuestionnaireCreateRequest,
     QuestionnaireUpdateRequest,
+    SharedResourceAccessReplaceRequest,
     SharedResourceCreateRequest,
     SharedResourceRead,
     SharedResourceUpdateRequest,
@@ -335,6 +336,7 @@ def _to_shared_resource_read(resource: SharedResource) -> SharedResourceRead:
     return SharedResourceRead(
         id=resource.id,
         uploader_id=resource.uploader_id,
+        uploader=resource.uploader,
         resource_name=resource.resource_name,
         description=resource.description,
         original_filename=resource.original_filename,
@@ -1163,6 +1165,26 @@ async def close_poll(
     return _to_poll_read(saved)
 
 
+async def reopen_poll(
+    session: AsyncSession,
+    poll_id: int,
+) -> PollRead:
+    repository = PollRepository(session)
+    poll = await repository.get_by_id(poll_id)
+    if poll is None:
+        raise NotFoundError("Poll not found.")
+    if poll.status == "archived":
+        raise ConflictError("Archived polls cannot be reopened.")
+    if poll.status != "closed":
+        raise ConflictError("Only closed polls can be reopened.")
+    poll.status = "published"
+    poll.closed_at = None
+    if poll.published_at is None:
+        poll.published_at = utc_now()
+    saved = await repository.save(poll)
+    return _to_poll_read(saved)
+
+
 async def archive_poll(
     session: AsyncSession,
     poll_id: int,
@@ -1375,6 +1397,19 @@ async def list_shared_resources(
     return [_to_shared_resource_read(resource) for resource in visible_resources]
 
 
+async def list_shared_resource_shareable_users(
+    session: AsyncSession,
+    current_user_id: UUID,
+    query: str | None = None,
+) -> list[User]:
+    repository = UserRepository(session)
+    return await repository.list(
+        query=query,
+        active_only=True,
+        exclude_user_id=current_user_id,
+    )
+
+
 async def create_shared_resource(
     session: AsyncSession,
     current_user_id: UUID,
@@ -1427,7 +1462,7 @@ async def create_shared_resource(
         recipient_ids=shared_user_ids,
         sender_id=current_user_id,
         content=f"A shared resource was added for you: {refreshed.resource_name}",
-        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+        url=f"/my/shared-resources?resource_id={refreshed.id}",
     )
     return _to_shared_resource_read(refreshed)
 
@@ -1523,17 +1558,18 @@ async def get_shared_resource_download_details(
     session: AsyncSession,
     resource_id: int,
     current_user_id: UUID,
-) -> tuple[Path, str, str | None]:
+) -> str:
     repository = SharedResourceRepository(session)
     resource = await repository.get_by_id(resource_id)
     if resource is None:
         raise NotFoundError("Shared resource not found.")
     if not _resource_can_be_seen_by(resource, current_user_id):
         raise PermissionDeniedError("Not enough permissions.")
-    file_path = get_stored_resource_file_path(resource.storage_key)
-    if not file_path.exists():
-        raise NotFoundError("Stored file not found.")
-    return file_path, resource.original_filename, resource.content_type
+    return get_stored_resource_download_url(
+        resource.storage_key,
+        original_filename=resource.original_filename,
+        content_type=resource.content_type,
+    )
 
 
 async def add_shared_resource_user_access(
@@ -1565,8 +1601,69 @@ async def add_shared_resource_user_access(
         recipient_id=user_id,
         sender_id=current_user_id,
         content=f"You were granted access to shared resource: {refreshed.resource_name}",
-        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+        url=f"/my/shared-resources?resource_id={refreshed.id}",
     )
+    return _to_shared_resource_read(refreshed)
+
+
+async def replace_shared_resource_access(
+    session: AsyncSession,
+    resource_id: int,
+    payload: SharedResourceAccessReplaceRequest,
+    current_user_id: UUID,
+    is_staff: bool,
+) -> SharedResourceRead:
+    user_repository = UserRepository(session)
+    repository = SharedResourceRepository(session)
+    resource = await repository.get_by_id(resource_id)
+    if resource is None:
+        raise NotFoundError("Shared resource not found.")
+    if not _resource_can_be_managed_by(resource, current_user_id, is_staff):
+        raise PermissionDeniedError("Not enough permissions.")
+
+    shared_user_ids = _normalized_uuid_list(payload.shared_user_ids)
+    confidential_user_ids = _normalized_uuid_list(payload.confidential_access_user_ids)
+
+    for user_id in shared_user_ids + confidential_user_ids:
+        if user_id == current_user_id:
+            continue
+        if await user_repository.get_by_id(user_id) is None:
+            raise NotFoundError(f"User {user_id} not found.")
+
+    invalid_confidential_ids = [
+        user_id for user_id in confidential_user_ids if user_id not in shared_user_ids
+    ]
+    if invalid_confidential_ids:
+        raise ConflictError(
+            "Confidential access users must already be included in shared users."
+        )
+    if confidential_user_ids and not resource.is_confidential:
+        raise ConflictError("Resource is not confidential.")
+
+    current_shared_ids = set(_resource_shared_user_ids(resource))
+    current_confidential_ids = set(_resource_confidential_user_ids(resource))
+    next_shared_ids = set(shared_user_ids)
+    next_confidential_ids = set(confidential_user_ids)
+
+    for user_id in current_confidential_ids - next_confidential_ids:
+        access = await repository.get_confidential_access(resource_id, user_id)
+        if access is not None:
+            await repository.remove_confidential_access(access)
+
+    for user_id in current_shared_ids - next_shared_ids:
+        share = await repository.get_share(resource_id, user_id)
+        if share is not None:
+            await repository.remove_share(share)
+
+    for user_id in next_shared_ids - current_shared_ids:
+        await repository.add_share(resource_id, user_id)
+
+    for user_id in next_confidential_ids - current_confidential_ids:
+        await repository.add_confidential_access(resource_id, user_id)
+
+    refreshed = await repository.get_by_id(resource_id)
+    if refreshed is None:
+        raise NotFoundError("Shared resource not found.")
     return _to_shared_resource_read(refreshed)
 
 
@@ -1632,7 +1729,7 @@ async def add_shared_resource_confidential_access(
             f"You were granted confidential access to shared resource: "
             f"{refreshed.resource_name}"
         ),
-        url=f"/hr/shared-resources?resource_id={refreshed.id}",
+        url=f"/my/shared-resources?resource_id={refreshed.id}",
     )
     return _to_shared_resource_read(refreshed)
 

@@ -30,6 +30,7 @@ from app.schemas.performance import (
     PollCreateRequest,
     PollVoteSubmitRequest,
     PollChoiceCreateRequest,
+    SharedResourceAccessReplaceRequest,
     QuestionnaireCreateRequest,
     SharedResourceCreateRequest,
     SharedResourceUpdateRequest,
@@ -952,6 +953,21 @@ def test_unarchive_and_move_to_draft_workflow(monkeypatch):
     )
     assert closed_poll.status == "closed"
 
+    reopened_poll = anyio.run(
+        performance_service.reopen_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert reopened_poll.status == "published"
+    assert reopened_poll.closed_at is None
+
+    reclosed_poll = anyio.run(
+        performance_service.close_poll,
+        cast(AsyncSession, object()),
+        poll.id,
+    )
+    assert reclosed_poll.status == "closed"
+
     archived_poll = anyio.run(
         performance_service.archive_poll,
         cast(AsyncSession, object()),
@@ -1150,6 +1166,107 @@ def test_shared_resource_update_denied_for_non_owner(monkeypatch):
         )
         assert False, "Expected a PermissionDeniedError"
     except PermissionDeniedError:
+        assert True
+
+
+def test_replace_shared_resource_access_updates_all_users(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "SharedResourceRepository", FakeSharedResourceRepository)
+    monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
+    FakeUserRepository.users[UUID(int=3)] = User(
+        id=UUID(int=3),
+        email="third@example.com",
+        password_hash="hashed",
+        first_name="Third",
+        last_name="Three",
+        department_id=1,
+        is_active=True,
+        is_superuser=False,
+        can_modify_shift=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    created = anyio.run(
+        performance_service.create_shared_resource,
+        cast(AsyncSession, object()),
+        UUID(int=1),
+        SharedResourceCreateRequest(
+            resource_name="Operations Memo",
+            storage_key="1/ops-memo.pdf",
+            original_filename="ops-memo.pdf",
+            content_type="application/pdf",
+            size_bytes=2048,
+            shared_user_ids=[UUID(int=2)],
+            is_confidential=True,
+            confidential_access_user_ids=[UUID(int=2)],
+        ),
+    )
+
+    updated = anyio.run(
+        performance_service.replace_shared_resource_access,
+        cast(AsyncSession, object()),
+        created.id,
+        SharedResourceAccessReplaceRequest(
+            shared_user_ids=[UUID(int=3), UUID(int=2)],
+            confidential_access_user_ids=[UUID(int=3)],
+        ),
+        UUID(int=1),
+        False,
+    )
+
+    assert set(updated.shared_user_ids) == {UUID(int=2), UUID(int=3)}
+    assert updated.confidential_access_user_ids == [UUID(int=3)]
+
+
+def test_replace_shared_resource_access_requires_confidential_subset(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "SharedResourceRepository", FakeSharedResourceRepository)
+    monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
+    FakeUserRepository.users[UUID(int=3)] = User(
+        id=UUID(int=3),
+        email="third@example.com",
+        password_hash="hashed",
+        first_name="Third",
+        last_name="Three",
+        department_id=1,
+        is_active=True,
+        is_superuser=False,
+        can_modify_shift=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    created = anyio.run(
+        performance_service.create_shared_resource,
+        cast(AsyncSession, object()),
+        UUID(int=1),
+        SharedResourceCreateRequest(
+            resource_name="Memo",
+            storage_key="1/memo.pdf",
+            original_filename="memo.pdf",
+            content_type="application/pdf",
+            size_bytes=512,
+            is_confidential=True,
+        ),
+    )
+
+    try:
+        anyio.run(
+            performance_service.replace_shared_resource_access,
+            cast(AsyncSession, object()),
+            created.id,
+            SharedResourceAccessReplaceRequest(
+                shared_user_ids=[UUID(int=2)],
+                confidential_access_user_ids=[UUID(int=3)],
+            ),
+            UUID(int=1),
+            False,
+        )
+        assert False, "Expected a ConflictError"
+    except ConflictError:
         assert True
 
 

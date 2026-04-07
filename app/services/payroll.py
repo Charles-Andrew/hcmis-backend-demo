@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date
 import re
 from decimal import Decimal
 from uuid import UUID
@@ -10,10 +12,14 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.time import utc_now
 from app.models.payroll import (
     FixedCompensation,
+    Mp2Enrollment,
+    PayrollItemType,
     Position,
-    Mp2Account,
     PayrollSetting,
     Payslip,
+    PayrollRun,
+    PayrollRunInput,
+    PayrollRunInputAudit,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
     ThirteenthMonthPay,
@@ -24,8 +30,12 @@ from app.models.user import User
 from app.repositories.departments import DepartmentRepository
 from app.repositories.payroll import (
     FixedCompensationRepository,
+    Mp2EnrollmentRepository,
+    PayrollItemTypeRepository,
+    PayrollRunInputAuditRepository,
+    PayrollRunInputRepository,
+    PayrollRunRepository,
     PositionRepository,
-    Mp2Repository,
     PayrollSettingRepository,
     PayslipRepository,
     PayslipVariableCompensationRepository,
@@ -38,6 +48,11 @@ from app.services.notifications import create_notification_if_possible
 from app.schemas.payroll import (
     FixedCompensationUpsertRequest,
     FixedCompensationUsersRequest,
+    Mp2EnrollmentCreateRequest,
+    Mp2EnrollmentUpdateRequest,
+    PayrollItemTypeUpsertRequest,
+    PayrollRunInputCreateRequest,
+    PayrollRunInputUpdateRequest,
     PositionUpsertRequest,
     PayrollSettingUpdateRequest,
     PayslipCreateRequest,
@@ -125,29 +140,318 @@ async def update_settings(
     return await PayrollSettingRepository(session).save(settings)
 
 
-async def get_mp2(session: AsyncSession) -> Mp2Account:
-    repository = Mp2Repository(session)
-    mp2 = await repository.get_first()
-    if mp2 is None:
-        mp2 = Mp2Account(id=1, amount=Decimal("0.00"))
-        return await repository.create(mp2)
-    return mp2
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
-async def update_mp2(
-    session: AsyncSession, amount: Decimal, user_ids: list[UUID]
-) -> Mp2Account:
-    mp2 = await get_mp2(session)
-    mp2.amount = amount
-    user_repository = UserRepository(session)
-    users = []
-    for user_id in user_ids:
-        user = await user_repository.get_by_id(user_id)
-        if user is None:
-            raise NotFoundError("User not found.")
-        users.append(user)
-    mp2.users = users
-    return await Mp2Repository(session).save(mp2)
+def _is_payroll_run_editable(payroll_run: PayrollRun) -> bool:
+    return payroll_run.status in {"DRAFT", "VALIDATED"}
+
+
+async def _get_payroll_run_for_input_edit(
+    session: AsyncSession, payroll_run_id: int
+) -> PayrollRun:
+    payroll_run = await PayrollRunRepository(session).get_by_id(payroll_run_id)
+    if payroll_run is None:
+        raise NotFoundError("Payroll run not found.")
+    if not _is_payroll_run_editable(payroll_run):
+        raise ConflictError("Only draft or validated payroll runs can be edited.")
+    return payroll_run
+
+
+async def _create_payroll_run_input_audit(
+    session: AsyncSession,
+    payroll_run_input_id: int,
+    action: str,
+    actor_id: UUID | None,
+    payload_json: dict,
+) -> PayrollRunInputAudit:
+    return await PayrollRunInputAuditRepository(session).create(
+        PayrollRunInputAudit(
+            payroll_run_input_id=payroll_run_input_id,
+            action=action,
+            actor_id=actor_id,
+            payload_json=payload_json,
+        )
+    )
+
+
+async def list_payroll_item_types(
+    session: AsyncSession,
+    active_only: bool = False,
+) -> list[PayrollItemType]:
+    return await PayrollItemTypeRepository(session).list(active_only=active_only)
+
+
+async def create_payroll_item_type(
+    session: AsyncSession,
+    payload: PayrollItemTypeUpsertRequest,
+) -> PayrollItemType:
+    repository = PayrollItemTypeRepository(session)
+    if await repository.get_by_code(payload.code) is not None:
+        raise ConflictError("Payroll item type code already exists.")
+    return await repository.create(
+        PayrollItemType(
+            code=payload.code,
+            name=payload.name,
+            category=payload.category,
+            behavior=payload.behavior,
+            taxable=payload.taxable,
+            is_active=payload.is_active,
+            display_order=payload.display_order,
+        )
+    )
+
+
+async def update_payroll_item_type(
+    session: AsyncSession,
+    item_type_id: int,
+    payload: PayrollItemTypeUpsertRequest,
+) -> PayrollItemType:
+    repository = PayrollItemTypeRepository(session)
+    item_type = await repository.get_by_id(item_type_id)
+    if item_type is None:
+        raise NotFoundError("Payroll item type not found.")
+    existing = await repository.get_by_code(payload.code)
+    if existing is not None and existing.id != item_type_id:
+        raise ConflictError("Payroll item type code already exists.")
+    item_type.code = payload.code
+    item_type.name = payload.name
+    item_type.category = payload.category
+    item_type.behavior = payload.behavior
+    item_type.taxable = payload.taxable
+    item_type.is_active = payload.is_active
+    item_type.display_order = payload.display_order
+    return await repository.save(item_type)
+
+
+async def list_payroll_run_inputs(
+    session: AsyncSession,
+    payroll_run_id: int,
+    user_id: UUID | None = None,
+) -> list[PayrollRunInput]:
+    payroll_run = await PayrollRunRepository(session).get_by_id(payroll_run_id)
+    if payroll_run is None:
+        raise NotFoundError("Payroll run not found.")
+    return await PayrollRunInputRepository(session).list(payroll_run_id, user_id=user_id)
+
+
+async def get_approved_payroll_run_inputs_for_user(
+    session: AsyncSession,
+    payroll_run_id: int,
+    user_id: UUID,
+) -> list[PayrollRunInput]:
+    return await PayrollRunInputRepository(session).list_for_run_user(
+        payroll_run_id,
+        user_id,
+        approved_only=True,
+    )
+
+
+async def create_payroll_run_input(
+    session: AsyncSession,
+    payroll_run_id: int,
+    payload: PayrollRunInputCreateRequest,
+    created_by: UUID | None,
+) -> PayrollRunInput:
+    await _get_payroll_run_for_input_edit(session, payroll_run_id)
+    if await UserRepository(session).get_by_id(payload.user_id) is None:
+        raise NotFoundError("User not found.")
+    item_type = await PayrollItemTypeRepository(session).get_by_id(payload.payroll_item_type_id)
+    if item_type is None:
+        raise NotFoundError("Payroll item type not found.")
+    if not item_type.is_active:
+        raise ConflictError("Payroll item type is inactive.")
+    run_input = await PayrollRunInputRepository(session).create(
+        PayrollRunInput(
+            payroll_run_id=payroll_run_id,
+            user_id=payload.user_id,
+            payroll_item_type_id=payload.payroll_item_type_id,
+            amount=payload.amount,
+            remarks=_normalize_optional_text(payload.remarks),
+            source="manual",
+            status="draft",
+            created_by=created_by,
+        )
+    )
+    await _create_payroll_run_input_audit(
+        session,
+        run_input.id,
+        "created",
+        created_by,
+        {
+            "amount": str(run_input.amount),
+            "payroll_item_type_id": run_input.payroll_item_type_id,
+            "remarks": run_input.remarks,
+        },
+    )
+    return run_input
+
+
+async def update_payroll_run_input(
+    session: AsyncSession,
+    run_input_id: int,
+    payload: PayrollRunInputUpdateRequest,
+    actor_id: UUID | None,
+) -> PayrollRunInput:
+    repository = PayrollRunInputRepository(session)
+    run_input = await repository.get_by_id(run_input_id)
+    if run_input is None:
+        raise NotFoundError("Payroll run input not found.")
+    await _get_payroll_run_for_input_edit(session, run_input.payroll_run_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "payroll_item_type_id" in data:
+        item_type = await PayrollItemTypeRepository(session).get_by_id(data["payroll_item_type_id"])
+        if item_type is None:
+            raise NotFoundError("Payroll item type not found.")
+        if not item_type.is_active:
+            raise ConflictError("Payroll item type is inactive.")
+    if "remarks" in data:
+        data["remarks"] = _normalize_optional_text(data["remarks"])
+    before = {
+        "amount": str(run_input.amount),
+        "payroll_item_type_id": run_input.payroll_item_type_id,
+        "remarks": run_input.remarks,
+        "status": run_input.status,
+    }
+    for field_name, value in data.items():
+        setattr(run_input, field_name, value)
+    run_input.status = "draft"
+    run_input.approved_by = None
+    run_input.approved_at = None
+    saved = await repository.save(run_input)
+    await _create_payroll_run_input_audit(
+        session,
+        saved.id,
+        "updated",
+        actor_id,
+        {
+            "before": before,
+            "after": {
+                "amount": str(saved.amount),
+                "payroll_item_type_id": saved.payroll_item_type_id,
+                "remarks": saved.remarks,
+                "status": saved.status,
+            },
+        },
+    )
+    return saved
+
+
+async def delete_payroll_run_input(
+    session: AsyncSession,
+    run_input_id: int,
+    actor_id: UUID | None,
+) -> None:
+    repository = PayrollRunInputRepository(session)
+    run_input = await repository.get_by_id(run_input_id)
+    if run_input is None:
+        raise NotFoundError("Payroll run input not found.")
+    await _get_payroll_run_for_input_edit(session, run_input.payroll_run_id)
+    await _create_payroll_run_input_audit(
+        session,
+        run_input.id,
+        "deleted",
+        actor_id,
+        {
+            "amount": str(run_input.amount),
+            "payroll_item_type_id": run_input.payroll_item_type_id,
+            "remarks": run_input.remarks,
+            "status": run_input.status,
+        },
+    )
+    await repository.delete(run_input)
+
+
+def resolve_mp2_effective_date(
+    month: int | None,
+    year: int | None,
+    period: str | None,
+) -> date:
+    if month is None or year is None:
+        return utc_now().date()
+    if period == "1ST":
+        return date(year, month, 15)
+    return date(year, month, monthrange(year, month)[1])
+
+
+async def list_mp2_enrollments(
+    session: AsyncSession,
+    status: str | None = None,
+) -> list[Mp2Enrollment]:
+    return await Mp2EnrollmentRepository(session).list(status=status)
+
+
+async def get_mp2_enrollment(session: AsyncSession, enrollment_id: int) -> Mp2Enrollment:
+    enrollment = await Mp2EnrollmentRepository(session).get_by_id(enrollment_id)
+    if enrollment is None:
+        raise NotFoundError("MP2 enrollment not found.")
+    return enrollment
+
+
+async def create_mp2_enrollment(
+    session: AsyncSession,
+    payload: Mp2EnrollmentCreateRequest,
+) -> Mp2Enrollment:
+    if payload.effective_to is not None and payload.effective_to < payload.effective_from:
+        raise ConflictError("Effective to date must be on or after effective from date.")
+    user = await UserRepository(session).get_by_id(payload.user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+    enrollment = Mp2Enrollment(
+        user_id=payload.user_id,
+        amount=payload.amount,
+        effective_from=payload.effective_from,
+        effective_to=payload.effective_to,
+        status=payload.status,
+        mp2_account_number=_normalize_optional_text(payload.mp2_account_number),
+        notes=_normalize_optional_text(payload.notes),
+    )
+    return await Mp2EnrollmentRepository(session).create(enrollment)
+
+
+async def update_mp2_enrollment(
+    session: AsyncSession,
+    enrollment_id: int,
+    payload: Mp2EnrollmentUpdateRequest,
+) -> Mp2Enrollment:
+    enrollment = await get_mp2_enrollment(session, enrollment_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "mp2_account_number" in data:
+        data["mp2_account_number"] = _normalize_optional_text(data["mp2_account_number"])
+    if "notes" in data:
+        data["notes"] = _normalize_optional_text(data["notes"])
+    next_effective_from = data.get("effective_from", enrollment.effective_from)
+    next_effective_to = data.get("effective_to", enrollment.effective_to)
+    if next_effective_to is not None and next_effective_to < next_effective_from:
+        raise ConflictError("Effective to date must be on or after effective from date.")
+    for field_name, value in data.items():
+        setattr(enrollment, field_name, value)
+    return await Mp2EnrollmentRepository(session).save(enrollment)
+
+
+async def end_mp2_enrollment(
+    session: AsyncSession,
+    enrollment_id: int,
+    effective_to: date,
+) -> Mp2Enrollment:
+    enrollment = await get_mp2_enrollment(session, enrollment_id)
+    if effective_to < enrollment.effective_from:
+        raise ConflictError("End date must be on or after effective from date.")
+    enrollment.effective_to = effective_to
+    enrollment.status = "ended"
+    return await Mp2EnrollmentRepository(session).save(enrollment)
+
+
+async def get_active_mp2_for_user(
+    session: AsyncSession,
+    user_id: UUID,
+    effective_date: date,
+) -> Mp2Enrollment | None:
+    return await Mp2EnrollmentRepository(session).get_active_for_user_on(user_id, effective_date)
 
 
 def list_deduction_config() -> list[dict]:
@@ -350,10 +654,14 @@ async def _current_salary_for_user(session: AsyncSession, user: User) -> tuple[s
     return user.rank, base_salary.quantize(Decimal("0.01"))
 
 
-async def _mp2_deduction_for_user(session: AsyncSession, user: User) -> Decimal:
-    mp2 = await get_mp2(session)
-    if any(mp2_user.id == user.id for mp2_user in mp2.users):
-        return _to_decimal(mp2.amount).quantize(Decimal("0.01"))
+async def _mp2_deduction_for_user(
+    session: AsyncSession,
+    user_id: UUID,
+    effective_date: date,
+) -> Decimal:
+    enrollment = await get_active_mp2_for_user(session, user_id, effective_date)
+    if enrollment is not None:
+        return _to_decimal(enrollment.amount).quantize(Decimal("0.01"))
     return Decimal("0.00")
 
 
@@ -484,7 +792,8 @@ async def get_payslip_summary(session: AsyncSession, payslip_id: int) -> dict:
     gross_per_cutoff = gross_pay / Decimal("2")
     mandatory = _compute_deductions(settings, gross_pay)
     mandatory_total = sum(mandatory.values(), Decimal("0.00"))
-    mp2_deduction = await _mp2_deduction_for_user(session, payslip.user)
+    effective_date = resolve_mp2_effective_date(payslip.month, payslip.year, payslip.period)
+    mp2_deduction = await _mp2_deduction_for_user(session, payslip.user.id, effective_date)
     total_deductions = variable_ded_total
     if payslip.period == "2ND":
         total_deductions += mandatory_total + mp2_deduction

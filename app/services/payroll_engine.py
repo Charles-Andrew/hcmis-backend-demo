@@ -10,6 +10,7 @@ from app.repositories.payroll import (
     FixedCompensationRepository,
     PayrollPolicyRuleRepository,
     PayrollPolicyVersionRepository,
+    PayrollRunInputRepository,
     PayslipRepository,
 )
 from app.schemas.payroll import (
@@ -17,7 +18,11 @@ from app.schemas.payroll import (
     PayslipSummaryComparisonRead,
     PayslipSummaryRead,
 )
-from app.services.payroll import get_mp2, get_payslip_summary
+from app.services.payroll import (
+    get_active_mp2_for_user,
+    get_payslip_summary,
+    resolve_mp2_effective_date,
+)
 
 
 PH_POLICY_KEY = "PH_STATUTORY"
@@ -35,14 +40,37 @@ def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
 
 
+def _decimal_attr(rule: object, *names: str, default: Decimal | int | str | float | None = None) -> Decimal:
+    for name in names:
+        if hasattr(rule, name):
+            return _to_decimal(getattr(rule, name))
+    return _to_decimal(default)
+
+
+def _optional_decimal_attr(rule: object, *names: str) -> Decimal | None:
+    for name in names:
+        if hasattr(rule, name):
+            value = getattr(rule, name)
+            return _to_decimal(value) if value is not None else None
+    return None
+
+
 def _pick_rule_by_compensation(rules: list[object], compensation: Decimal):
     if not rules:
         return None
 
     for rule in rules:
-        min_compensation = _to_decimal(getattr(rule, "min_compensation", 0))
-        max_compensation = getattr(rule, "max_compensation", None)
-        max_value = _to_decimal(max_compensation) if max_compensation is not None else None
+        min_compensation = _decimal_attr(
+            rule,
+            "compensation_range_from",
+            "min_compensation",
+            default=0,
+        )
+        max_value = _optional_decimal_attr(
+            rule,
+            "compensation_range_to",
+            "max_compensation",
+        )
         if compensation >= min_compensation and (
             max_value is None or compensation <= max_value
         ):
@@ -51,18 +79,41 @@ def _pick_rule_by_compensation(rules: list[object], compensation: Decimal):
     eligible = [
         rule
         for rule in rules
-        if compensation >= _to_decimal(getattr(rule, "min_compensation", 0))
+        if compensation >= _decimal_attr(
+            rule,
+            "compensation_range_from",
+            "min_compensation",
+            default=0,
+        )
     ]
     if eligible:
-        return max(eligible, key=lambda item: _to_decimal(getattr(item, "min_compensation", 0)))
-    return min(rules, key=lambda item: _to_decimal(getattr(item, "min_compensation", 0)))
+        return max(
+            eligible,
+            key=lambda item: _decimal_attr(
+                item,
+                "compensation_range_from",
+                "min_compensation",
+                default=0,
+            ),
+        )
+    return min(
+        rules,
+        key=lambda item: _decimal_attr(
+            item,
+            "compensation_range_from",
+            "min_compensation",
+            default=0,
+        ),
+    )
 
 
 def _compute_sss_deduction(gross_pay: Decimal, sss_brackets: list[object]) -> Decimal:
     rule = _pick_rule_by_compensation(sss_brackets, gross_pay)
     if rule is None:
         return Decimal("0.00")
-    return _quantize(_to_decimal(getattr(rule, "employee_share", 0)))
+    regular = _decimal_attr(rule, "employee_contribution", "employee_share", default=0)
+    mpf = _decimal_attr(rule, "mpf_employee_contribution", default=0)
+    return _quantize(regular + mpf)
 
 
 def _compute_philhealth_deduction(gross_pay: Decimal, philhealth_rules: list[object]) -> Decimal:
@@ -70,10 +121,16 @@ def _compute_philhealth_deduction(gross_pay: Decimal, philhealth_rules: list[obj
     if rule is None:
         return Decimal("0.00")
 
-    min_compensation = _to_decimal(getattr(rule, "min_compensation", 0))
-    max_compensation_value = getattr(rule, "max_compensation", None)
-    max_compensation = (
-        _to_decimal(max_compensation_value) if max_compensation_value is not None else None
+    min_compensation = _decimal_attr(
+        rule,
+        "compensation_range_from",
+        "min_compensation",
+        default=0,
+    )
+    max_compensation = _optional_decimal_attr(
+        rule,
+        "compensation_range_to",
+        "max_compensation",
     )
     premium_base = gross_pay
     if premium_base < min_compensation:
@@ -81,7 +138,7 @@ def _compute_philhealth_deduction(gross_pay: Decimal, philhealth_rules: list[obj
     if max_compensation is not None and premium_base > max_compensation:
         premium_base = max_compensation
 
-    rate = _to_decimal(getattr(rule, "rate", 0))
+    rate = _decimal_attr(rule, "premium_rate", "rate", default=0)
     employee_share_ratio = _to_decimal(getattr(rule, "employee_share_ratio", 0))
     return _quantize(premium_base * rate * employee_share_ratio)
 
@@ -90,26 +147,41 @@ def _compute_pagibig_deduction(gross_pay: Decimal, pagibig_rules: list[object]) 
     applicable = [
         rule
         for rule in pagibig_rules
-        if gross_pay >= _to_decimal(getattr(rule, "min_compensation", 0))
+        if gross_pay >= _decimal_attr(
+            rule,
+            "compensation_range_from",
+            "min_compensation",
+            default=0,
+        )
     ]
     if applicable:
         rule = max(
             applicable,
-            key=lambda item: _to_decimal(getattr(item, "min_compensation", 0)),
+            key=lambda item: _decimal_attr(
+                item,
+                "compensation_range_from",
+                "min_compensation",
+                default=0,
+            ),
         )
     elif pagibig_rules:
         rule = min(
             pagibig_rules,
-            key=lambda item: _to_decimal(getattr(item, "min_compensation", 0)),
+            key=lambda item: _decimal_attr(
+                item,
+                "compensation_range_from",
+                "min_compensation",
+                default=0,
+            ),
         )
     else:
         return Decimal("0.00")
 
-    cap = _to_decimal(getattr(rule, "monthly_compensation_cap", 0))
+    cap = _decimal_attr(rule, "compensation_cap", "monthly_compensation_cap", default=0)
     employee_rate = _to_decimal(getattr(rule, "employee_rate", 0))
     deduction = min(gross_pay, cap) * employee_rate
 
-    max_employee_share = getattr(rule, "max_employee_share", None)
+    max_employee_share = getattr(rule, "employee_share_cap", getattr(rule, "max_employee_share", None))
     if max_employee_share is not None:
         deduction = min(deduction, _to_decimal(max_employee_share))
     return _quantize(deduction)
@@ -128,7 +200,7 @@ def _compute_tax_deduction(gross_per_cutoff: Decimal, bir_brackets: list[object]
 
     base_tax = _to_decimal(getattr(rule, "base_tax", 0))
     marginal_rate = _to_decimal(getattr(rule, "marginal_rate", 0))
-    over_amount = _to_decimal(getattr(rule, "over_amount", 0))
+    over_amount = _decimal_attr(rule, "excess_over", "over_amount", default=0)
     taxable_excess = max(gross_per_cutoff - over_amount, Decimal("0.00"))
     return _quantize(base_tax + (taxable_excess * marginal_rate))
 
@@ -181,10 +253,14 @@ async def _compute_mandatory_deductions_from_policy(
     }
 
 
-async def _compute_mp2_deduction_for_user(session: AsyncSession, user_id) -> Decimal:
-    mp2 = await get_mp2(session)
-    if any(mp2_user.id == user_id for mp2_user in mp2.users):
-        return _to_decimal(mp2.amount).quantize(Decimal("0.01"))
+async def _compute_mp2_deduction_for_user(
+    session: AsyncSession,
+    user_id,
+    effective_date: date,
+) -> Decimal:
+    enrollment = await get_active_mp2_for_user(session, user_id, effective_date)
+    if enrollment is not None:
+        return _to_decimal(enrollment.amount).quantize(Decimal("0.01"))
     return Decimal("0.00")
 
 
@@ -192,6 +268,8 @@ async def compute_payslip_summary_v2(
     session: AsyncSession,
     payslip_id: int,
     policy_version_id: int | None = None,
+    payroll_run_id: int | None = None,
+    include_unapproved_run_inputs: bool = False,
 ) -> PayrollComputationRead:
     payslip = await PayslipRepository(session).get_by_id(payslip_id)
     if payslip is None:
@@ -213,14 +291,29 @@ async def compute_payslip_summary_v2(
         (_to_decimal(comp.amount) / Decimal("2") for comp in fixed_compensations if payslip.user in comp.users),
         Decimal("0.00"),
     )
-    variable_comp_total = sum(
-        (_to_decimal(item.amount) for item in payslip.variable_compensations),
-        Decimal("0.00"),
-    )
-    variable_ded_total = sum(
-        (_to_decimal(item.amount) for item in payslip.variable_deductions),
-        Decimal("0.00"),
-    )
+    if payroll_run_id is not None:
+        run_inputs = await PayrollRunInputRepository(session).list_for_run_user(
+            payroll_run_id,
+            payslip.user_id,
+            approved_only=not include_unapproved_run_inputs,
+        )
+        variable_comp_total = sum(
+            (_to_decimal(item.amount) for item in run_inputs if item.item_type.category == "earning"),
+            Decimal("0.00"),
+        )
+        variable_ded_total = sum(
+            (_to_decimal(item.amount) for item in run_inputs if item.item_type.category == "deduction"),
+            Decimal("0.00"),
+        )
+    else:
+        variable_comp_total = sum(
+            (_to_decimal(item.amount) for item in payslip.variable_compensations),
+            Decimal("0.00"),
+        )
+        variable_ded_total = sum(
+            (_to_decimal(item.amount) for item in payslip.variable_deductions),
+            Decimal("0.00"),
+        )
 
     gross_pay = base_salary + fixed_total + variable_comp_total
     gross_per_cutoff = (gross_pay / Decimal("2")).quantize(Decimal("0.01"))
@@ -231,7 +324,12 @@ async def compute_payslip_summary_v2(
         resolved_policy_version_id,
     )
     mandatory_total = sum(mandatory.values(), Decimal("0.00"))
-    mp2_deduction = await _compute_mp2_deduction_for_user(session, payslip.user_id)
+    effective_date = resolve_mp2_effective_date(payslip.month, payslip.year, payslip.period)
+    mp2_deduction = await _compute_mp2_deduction_for_user(
+        session,
+        payslip.user_id,
+        effective_date,
+    )
 
     # Existing behavior applies mandatory deductions on second cutoff only.
     total_deductions = variable_ded_total

@@ -31,40 +31,8 @@ ALLOWED_PROFILE_PHOTO_EXTENSIONS = {
 }
 
 
-def _profile_backend() -> str:
-    return settings.profile_photos_storage_backend.strip().lower()
-
-
 def _max_size_bytes() -> int:
     return int(settings.profile_photos_max_file_size_mb) * 1024 * 1024
-
-
-def _filesystem_storage_root() -> Path:
-    return Path(settings.profile_photos_storage_dir).resolve()
-
-
-def _resolve_filesystem_path(storage_key: str) -> Path:
-    base = _filesystem_storage_root()
-    path = (base / storage_key).resolve()
-    if base != path and base not in path.parents:
-        raise ValueError("Invalid storage key.")
-    return path
-
-
-def _normalize_public_base_url(raw_value: str | None, *, fallback: str) -> str:
-    base = (raw_value or "").strip()
-    if not base:
-        base = fallback
-    return base.rstrip("/")
-
-
-def _build_filesystem_photo_url(storage_key: str, request_base_url: str) -> str:
-    configured_base = (settings.profile_photos_public_base_url or "").strip()
-    base_url = _normalize_public_base_url(
-        configured_base,
-        fallback=request_base_url,
-    )
-    return f"{base_url}/profile/photos/{storage_key}"
 
 
 def _validate_upload(uploaded_file: UploadFile) -> str:
@@ -108,21 +76,21 @@ def _build_s3_client():
 
     from botocore.config import Config
 
-    endpoint_url = (settings.profile_photos_s3_endpoint_url or "").strip() or None
+    endpoint_url = (settings.supabase_storage_endpoint_url or "").strip() or None
     addressing_style = "path" if _is_supabase_s3_endpoint(endpoint_url) else "auto"
     client_kwargs = {
-        "region_name": settings.profile_photos_s3_region,
+        "region_name": settings.supabase_storage_region,
         "config": Config(signature_version="s3v4", s3={"addressing_style": addressing_style}),
     }
 
     if endpoint_url:
         client_kwargs["endpoint_url"] = endpoint_url
 
-    if settings.profile_photos_s3_access_key_id:
-        client_kwargs["aws_access_key_id"] = settings.profile_photos_s3_access_key_id
+    if settings.supabase_storage_access_key_id:
+        client_kwargs["aws_access_key_id"] = settings.supabase_storage_access_key_id
 
-    if settings.profile_photos_s3_secret_access_key:
-        client_kwargs["aws_secret_access_key"] = settings.profile_photos_s3_secret_access_key
+    if settings.supabase_storage_secret_access_key:
+        client_kwargs["aws_secret_access_key"] = settings.supabase_storage_secret_access_key
 
     return boto3.client("s3", **client_kwargs)
 
@@ -139,12 +107,12 @@ def _build_s3_photo_url(storage_key: str) -> str:
         return f"{base.rstrip('/')}/{storage_key}"
 
     bucket = settings.profile_photos_s3_bucket.strip()
-    endpoint_url = (settings.profile_photos_s3_endpoint_url or "").strip()
+    endpoint_url = (settings.supabase_storage_endpoint_url or "").strip()
     inferred_base = _infer_supabase_public_base_url(endpoint_url, bucket)
     if inferred_base:
         return f"{inferred_base}/{storage_key}"
 
-    region = settings.profile_photos_s3_region.strip()
+    region = settings.supabase_storage_region.strip()
     return f"https://{bucket}.s3.{region}.amazonaws.com/{storage_key}"
 
 
@@ -181,88 +149,34 @@ def _infer_supabase_public_base_url(endpoint_url: str, bucket: str) -> str | Non
 async def save_profile_photo(
     user_id: UUID,
     uploaded_file: UploadFile,
-    *,
-    request_base_url: str,
 ) -> StoredProfilePhoto:
     original_filename = _validate_upload(uploaded_file)
     extension = Path(original_filename).suffix.lower()[:20]
 
-    if _profile_backend() == "filesystem":
-        storage_key = f"{user_id}/{uuid4().hex}{extension}"
-        file_path = _resolve_filesystem_path(storage_key)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+    bucket = settings.profile_photos_s3_bucket.strip()
+    if not bucket:
+        raise RuntimeError("PROFILE_PHOTOS_S3_BUCKET must be configured.")
 
-        total_size = 0
-        try:
-            with file_path.open("wb") as handle:
-                while True:
-                    chunk = uploaded_file.file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total_size += len(chunk)
-                    if total_size > _max_size_bytes():
-                        raise ConflictError(
-                            f"File size exceeded limit ({settings.profile_photos_max_file_size_mb} MB)."
-                        )
-                    handle.write(chunk)
-        except Exception:
-            if file_path.exists():
-                file_path.unlink()
-            raise
+    data, total_size = _read_upload_bytes(uploaded_file)
+    storage_key = _build_s3_storage_key(user_id, extension)
+    client = _build_s3_client()
 
-        return StoredProfilePhoto(
-            storage_key=storage_key,
-            url=_build_filesystem_photo_url(storage_key, request_base_url),
-            content_type=uploaded_file.content_type,
-            size_bytes=total_size,
-        )
+    put_kwargs = {
+        "Bucket": bucket,
+        "Key": storage_key,
+        "Body": BytesIO(data),
+    }
+    if uploaded_file.content_type:
+        put_kwargs["ContentType"] = uploaded_file.content_type
 
-    if _profile_backend() == "s3":
-        bucket = settings.profile_photos_s3_bucket.strip()
-        if not bucket:
-            raise RuntimeError(
-                "PROFILE_PHOTOS_S3_BUCKET must be configured when using S3 storage."
-            )
+    client.put_object(**put_kwargs)
 
-        data, total_size = _read_upload_bytes(uploaded_file)
-        storage_key = _build_s3_storage_key(user_id, extension)
-        client = _build_s3_client()
-
-        put_kwargs = {
-            "Bucket": bucket,
-            "Key": storage_key,
-            "Body": BytesIO(data),
-        }
-        if uploaded_file.content_type:
-            put_kwargs["ContentType"] = uploaded_file.content_type
-
-        client.put_object(**put_kwargs)
-
-        return StoredProfilePhoto(
-            storage_key=storage_key,
-            url=_build_s3_photo_url(storage_key),
-            content_type=uploaded_file.content_type,
-            size_bytes=total_size,
-        )
-
-    raise RuntimeError(
-        "Invalid PROFILE_PHOTOS_STORAGE_BACKEND. Use 'filesystem' or 's3'."
+    return StoredProfilePhoto(
+        storage_key=storage_key,
+        url=_build_s3_photo_url(storage_key),
+        content_type=uploaded_file.content_type,
+        size_bytes=total_size,
     )
-
-
-def get_profile_photo_file_path(storage_key: str) -> Path:
-    return _resolve_filesystem_path(storage_key)
-
-
-def _extract_filesystem_storage_key(photo_url: str) -> str | None:
-    parsed = urlparse(photo_url)
-    path = parsed.path
-    marker = "/profile/photos/"
-    if marker not in path:
-        return None
-
-    _, storage_key = path.split(marker, maxsplit=1)
-    return storage_key.strip("/") or None
 
 
 def _extract_s3_storage_key(photo_url: str) -> str | None:
@@ -271,7 +185,7 @@ def _extract_s3_storage_key(photo_url: str) -> str | None:
         return photo_url.removeprefix(f"{base}/").strip("/") or None
 
     bucket = settings.profile_photos_s3_bucket.strip()
-    endpoint_url = (settings.profile_photos_s3_endpoint_url or "").strip()
+    endpoint_url = (settings.supabase_storage_endpoint_url or "").strip()
     inferred_base = _infer_supabase_public_base_url(endpoint_url, bucket)
     if inferred_base and photo_url.startswith(f"{inferred_base}/"):
         return photo_url.removeprefix(f"{inferred_base}/").strip("/") or None
@@ -291,91 +205,63 @@ def get_profile_photo_read_url(photo_url: str | None) -> str | None:
     if not photo_url:
         return None
 
-    backend = _profile_backend()
-    if backend == "filesystem":
-        return photo_url
+    storage_key = _extract_s3_storage_key(photo_url)
+    if not storage_key:
+        return None
 
-    if backend == "s3":
-        storage_key = _extract_s3_storage_key(photo_url)
-        if not storage_key:
-            return None
+    bucket = settings.profile_photos_s3_bucket.strip()
+    if not bucket:
+        return None
 
-        bucket = settings.profile_photos_s3_bucket.strip()
-        if not bucket:
-            return None
-
-        expires_in = max(60, int(settings.profile_photos_signed_url_ttl_seconds))
-        client = _build_s3_client()
-        return str(
-            client.generate_presigned_url(
-                ClientMethod="get_object",
-                Params={"Bucket": bucket, "Key": storage_key},
-                ExpiresIn=expires_in,
-            )
+    expires_in = max(60, int(settings.profile_photos_signed_url_ttl_seconds))
+    client = _build_s3_client()
+    return str(
+        client.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": bucket, "Key": storage_key},
+            ExpiresIn=expires_in,
         )
-
-    return photo_url
+    )
 
 
 def delete_profile_photo_by_url(photo_url: str | None) -> None:
     if not photo_url:
         return
 
-    backend = _profile_backend()
-    if backend == "filesystem":
-        storage_key = _extract_filesystem_storage_key(photo_url)
-        if not storage_key:
-            return
-
-        file_path = _resolve_filesystem_path(storage_key)
-        if file_path.exists() and file_path.is_file():
-            file_path.unlink()
+    storage_key = _extract_s3_storage_key(photo_url)
+    if not storage_key:
         return
 
-    if backend == "s3":
-        storage_key = _extract_s3_storage_key(photo_url)
-        if not storage_key:
-            return
+    bucket = settings.profile_photos_s3_bucket.strip()
+    if not bucket:
+        return
 
-        bucket = settings.profile_photos_s3_bucket.strip()
-        if not bucket:
-            return
-
-        client = _build_s3_client()
+    client = _build_s3_client()
+    try:
         client.delete_object(Bucket=bucket, Key=storage_key)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchKey", "NotFound", "404"}:
+            return
+        raise
 
 
 def get_profile_photo_content_by_url(photo_url: str) -> tuple[bytes, str | None]:
-    backend = _profile_backend()
-    if backend == "filesystem":
-        storage_key = _extract_filesystem_storage_key(photo_url)
-        if not storage_key:
-            raise FileNotFoundError("Profile photo not found.")
-        file_path = _resolve_filesystem_path(storage_key)
-        if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError("Profile photo not found.")
-        return file_path.read_bytes(), None
-
-    if backend == "s3":
-        storage_key = _extract_s3_storage_key(photo_url)
-        if not storage_key:
-            raise FileNotFoundError("Profile photo not found.")
-        bucket = settings.profile_photos_s3_bucket.strip()
-        if not bucket:
-            raise FileNotFoundError("Profile photo not found.")
-        client = _build_s3_client()
-        try:
-            response = client.get_object(Bucket=bucket, Key=storage_key)
-        except ClientError as exc:
-            code = str(exc.response.get("Error", {}).get("Code", ""))
-            if code in {"NoSuchKey", "NotFound", "404"}:
-                raise FileNotFoundError("Profile photo not found.") from exc
-            raise
-        body = response.get("Body")
-        if body is None:
-            raise FileNotFoundError("Profile photo not found.")
-        return body.read(), response.get("ContentType")
-
-    raise RuntimeError(
-        "Invalid PROFILE_PHOTOS_STORAGE_BACKEND. Use 'filesystem' or 's3'."
-    )
+    storage_key = _extract_s3_storage_key(photo_url)
+    if not storage_key:
+        raise FileNotFoundError("Profile photo not found.")
+    bucket = settings.profile_photos_s3_bucket.strip()
+    if not bucket:
+        raise FileNotFoundError("Profile photo not found.")
+    client = _build_s3_client()
+    try:
+        response = client.get_object(Bucket=bucket, Key=storage_key)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"NoSuchKey", "NotFound", "404"}:
+            raise FileNotFoundError("Profile photo not found.") from exc
+        raise
+    body = response.get("Body")
+    if body is None:
+        raise FileNotFoundError("Profile photo not found.")
+    return body.read(), response.get("ContentType")

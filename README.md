@@ -48,8 +48,10 @@ This command refuses to run if users already exist, so it is safe for a one-time
 
 ## Shared Resources File Storage
 
-- Uploaded shared resource files are stored on the local filesystem.
-- Default storage path: `./storage/shared-resources`
-- Override path with: `SHARED_RESOURCES_STORAGE_DIR`
+- Uploaded shared resource files are stored in Supabase Storage via the S3-compatible API.
+- Required bucket setting: `SHARED_RESOURCES_S3_BUCKET`
+- Shared connection setting: `SUPABASE_STORAGE_ENDPOINT_URL`
+- Key prefix: `SHARED_RESOURCES_S3_PREFIX` (default: `shared-resources`)
+- Signed download TTL: `SHARED_RESOURCES_SIGNED_URL_TTL_SECONDS`
 - Default max upload size: `50 MB` (`SHARED_RESOURCES_MAX_FILE_SIZE_MB`)
 - Allowed file classes: document files (`pdf/doc/docx/xls/xlsx/ppt/pptx/txt/csv`) and media files (image/video/audio common types)

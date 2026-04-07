@@ -8,6 +8,15 @@ from pydantic import Field
 from app.schemas.user import UserRead
 
 
+class SharedResourceUploaderRead(BaseModel):
+    id: UUID
+    email: str
+    first_name: str
+    last_name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class QuestionnaireRead(BaseModel):
     id: int
     code: str
@@ -135,6 +144,7 @@ class UserEvaluationAggregateRead(BaseModel):
 class SharedResourceRead(BaseModel):
     id: int
     uploader_id: UUID
+    uploader: SharedResourceUploaderRead | None = None
     resource_name: str
     description: str | None = None
     original_filename: str
@@ -169,6 +179,11 @@ class SharedResourceUpdateRequest(BaseModel):
 
 class SharedResourceAccessUpdateRequest(BaseModel):
     user_id: UUID
+
+
+class SharedResourceAccessReplaceRequest(BaseModel):
+    shared_user_ids: list[UUID] = Field(default_factory=list)
+    confidential_access_user_ids: list[UUID] = Field(default_factory=list)
 
 
 class AnnouncementRead(BaseModel):

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
@@ -21,6 +21,7 @@ from app.schemas.performance import (
     PollUpdateRequest,
     PollVoteSubmitRequest,
     PollCreateRequest,
+    SharedResourceAccessReplaceRequest,
     SharedResourceAccessUpdateRequest,
     SharedResourceCreateRequest,
     SharedResourceRead,
@@ -35,6 +36,7 @@ from app.schemas.performance import (
     UserEvaluationRead,
     UserEvaluationUpdateRequest,
 )
+from app.schemas.user import UserRead
 from app.services.performance import (
     add_poll_choice,
     add_shared_resource_confidential_access,
@@ -63,11 +65,14 @@ from app.services.performance import (
     list_evaluations,
     list_polls,
     list_questionnaires,
+    list_shared_resource_shareable_users,
     list_shared_resources,
     list_user_evaluations,
     get_user_evaluation_aggregate_summary,
     publish_announcement,
     publish_poll,
+    reopen_poll,
+    replace_shared_resource_access,
     remove_poll_choice,
     remove_shared_resource_confidential_access,
     remove_shared_resource_user_access,
@@ -238,6 +243,15 @@ async def close_poll_route(
     current_user: User = Depends(require_staff_user),
 ) -> PollRead:
     return await close_poll(session, poll_id)
+
+
+@router.post("/polls/{poll_id}/reopen", response_model=PollRead)
+async def reopen_poll_route(
+    poll_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PollRead:
+    return await reopen_poll(session, poll_id)
 
 
 @router.post("/polls/{poll_id}/archive", response_model=PollRead)
@@ -621,6 +635,19 @@ async def read_shared_resources(
     )
 
 
+@router.get("/shared-resources/shareable-users", response_model=list[UserRead])
+async def read_shared_resource_shareable_users(
+    q: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[User]:
+    return await list_shared_resource_shareable_users(
+        session=session,
+        current_user_id=current_user.id,
+        query=q,
+    )
+
+
 @router.post(
     "/shared-resources",
     response_model=SharedResourceRead,
@@ -700,17 +727,13 @@ async def download_shared_resource(
     resource_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
-) -> FileResponse:
-    file_path, filename, content_type = await get_shared_resource_download_details(
+) -> RedirectResponse:
+    download_url = await get_shared_resource_download_details(
         session=session,
         resource_id=resource_id,
         current_user_id=current_user.id,
     )
-    return FileResponse(
-        path=file_path,
-        media_type=content_type,
-        filename=filename,
-    )
+    return RedirectResponse(url=download_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.post("/shared-resources/{resource_id}/shares", response_model=SharedResourceRead)
@@ -724,6 +747,22 @@ async def add_share_access(
         session,
         resource_id=resource_id,
         user_id=payload.user_id,
+        current_user_id=current_user.id,
+        is_staff=is_staff_user(current_user),
+    )
+
+
+@router.put("/shared-resources/{resource_id}/access", response_model=SharedResourceRead)
+async def replace_access(
+    resource_id: int,
+    payload: SharedResourceAccessReplaceRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> SharedResourceRead:
+    return await replace_shared_resource_access(
+        session=session,
+        resource_id=resource_id,
+        payload=payload,
         current_user_id=current_user.id,
         is_staff=is_staff_user(current_user),
     )

@@ -62,9 +62,11 @@ class PayrollPolicyOfficialSeedRequest(BaseModel):
 
 class PayrollPolicySourceRead(BaseModel):
     id: int
-    source_type: str
+    document_type: str
     reference_code: str
+    title: str
     source_url: str
+    published_at: date | None = None
     effective_from: date
     effective_to: date | None = None
     applied_by: UUID | None = None
@@ -76,9 +78,11 @@ class PayrollPolicySourceRead(BaseModel):
 
 
 class PayrollPolicySourceWrite(BaseModel):
-    source_type: str = Field(min_length=1, max_length=50)
+    document_type: str = Field(min_length=1, max_length=50)
     reference_code: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=255)
     source_url: str = Field(min_length=1, max_length=500)
+    published_at: date | None = None
     effective_from: date
     effective_to: date | None = None
 
@@ -89,85 +93,105 @@ class PayrollPolicySourcesUpdateRequest(BaseModel):
 
 class PolicySssBracketRead(BaseModel):
     id: int
-    min_compensation: Decimal
-    max_compensation: Decimal
-    employee_share: Decimal
-    employer_share: Decimal
+    compensation_range_from: Decimal
+    compensation_range_to: Decimal
+    monthly_salary_credit: Decimal
+    employee_contribution: Decimal
+    employer_contribution: Decimal
+    ec_contribution: Decimal
+    mpf_employee_contribution: Decimal
+    mpf_employer_contribution: Decimal
+    source_reference: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class PolicySssBracketWrite(BaseModel):
-    min_compensation: Decimal = Field(ge=0)
-    max_compensation: Decimal = Field(ge=0)
-    employee_share: Decimal = Field(ge=0)
-    employer_share: Decimal = Field(ge=0)
+    compensation_range_from: Decimal = Field(ge=0)
+    compensation_range_to: Decimal = Field(ge=0)
+    monthly_salary_credit: Decimal = Field(ge=0)
+    employee_contribution: Decimal = Field(ge=0)
+    employer_contribution: Decimal = Field(ge=0)
+    ec_contribution: Decimal = Field(default=Decimal("0.00"), ge=0)
+    mpf_employee_contribution: Decimal = Field(default=Decimal("0.00"), ge=0)
+    mpf_employer_contribution: Decimal = Field(default=Decimal("0.00"), ge=0)
+    source_reference: str | None = Field(default=None, max_length=255)
 
 
 class PolicyPhilhealthRuleRead(BaseModel):
     id: int
-    min_compensation: Decimal
-    max_compensation: Decimal
-    rate: Decimal
+    compensation_range_from: Decimal
+    compensation_range_to: Decimal
+    premium_rate: Decimal
     employee_share_ratio: Decimal
+    employer_share_ratio: Decimal
+    source_reference: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class PolicyPhilhealthRuleWrite(BaseModel):
-    min_compensation: Decimal = Field(ge=0)
-    max_compensation: Decimal = Field(ge=0)
-    rate: Decimal = Field(ge=0)
+    compensation_range_from: Decimal = Field(ge=0)
+    compensation_range_to: Decimal = Field(ge=0)
+    premium_rate: Decimal = Field(ge=0)
     employee_share_ratio: Decimal = Field(ge=0)
+    employer_share_ratio: Decimal = Field(ge=0)
+    source_reference: str | None = Field(default=None, max_length=255)
 
 
 class PolicyPagibigRuleRead(BaseModel):
     id: int
-    min_compensation: Decimal
-    monthly_compensation_cap: Decimal
+    compensation_range_from: Decimal
+    compensation_range_to: Decimal | None = None
+    compensation_cap: Decimal
     employee_rate: Decimal
     employer_rate: Decimal
-    max_employee_share: Decimal | None = None
-    max_employer_share: Decimal | None = None
+    employee_share_cap: Decimal | None = None
+    employer_share_cap: Decimal | None = None
+    source_reference: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class PolicyPagibigRuleWrite(BaseModel):
-    min_compensation: Decimal = Field(ge=0)
-    monthly_compensation_cap: Decimal = Field(ge=0)
+    compensation_range_from: Decimal = Field(ge=0)
+    compensation_range_to: Decimal | None = Field(default=None, ge=0)
+    compensation_cap: Decimal = Field(ge=0)
     employee_rate: Decimal = Field(ge=0)
     employer_rate: Decimal = Field(ge=0)
-    max_employee_share: Decimal | None = Field(default=None, ge=0)
-    max_employer_share: Decimal | None = Field(default=None, ge=0)
+    employee_share_cap: Decimal | None = Field(default=None, ge=0)
+    employer_share_cap: Decimal | None = Field(default=None, ge=0)
+    source_reference: str | None = Field(default=None, max_length=255)
 
 
 class PolicyBirWithholdingBracketRead(BaseModel):
     id: int
     payroll_period: str
-    min_compensation: Decimal
-    max_compensation: Decimal | None = None
+    compensation_range_from: Decimal
+    compensation_range_to: Decimal | None = None
     base_tax: Decimal
     marginal_rate: Decimal
-    over_amount: Decimal
+    excess_over: Decimal
+    source_reference: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class PolicyBirWithholdingBracketWrite(BaseModel):
     payroll_period: str = Field(pattern="^(DAILY|WEEKLY|SEMI_MONTHLY|MONTHLY|ANNUAL)$")
-    min_compensation: Decimal = Field(ge=0)
-    max_compensation: Decimal | None = Field(default=None, ge=0)
+    compensation_range_from: Decimal = Field(ge=0)
+    compensation_range_to: Decimal | None = Field(default=None, ge=0)
     base_tax: Decimal = Field(ge=0)
     marginal_rate: Decimal = Field(ge=0)
-    over_amount: Decimal = Field(ge=0)
+    excess_over: Decimal = Field(ge=0)
+    source_reference: str | None = Field(default=None, max_length=255)
 
 
 class PolicyMinimumWageOrderRead(BaseModel):
     id: int
     region_code: str
     sector: str
-    daily_wage_amount: Decimal
+    daily_rate: Decimal
     effective_from: date
     effective_to: date | None = None
     source_reference: str | None = None
@@ -178,7 +202,7 @@ class PolicyMinimumWageOrderRead(BaseModel):
 class PolicyMinimumWageOrderWrite(BaseModel):
     region_code: str = Field(min_length=1, max_length=20)
     sector: str = Field(default="GENERAL", min_length=1, max_length=50)
-    daily_wage_amount: Decimal = Field(ge=0)
+    daily_rate: Decimal = Field(ge=0)
     effective_from: date
     effective_to: date | None = None
     source_reference: str | None = Field(default=None, max_length=255)
@@ -210,17 +234,39 @@ class PayrollPolicySourcesDetailRead(BaseModel):
     sources: list[PayrollPolicySourceRead] = Field(default_factory=list)
 
 
-class Mp2Read(BaseModel):
+class Mp2EnrollmentRead(BaseModel):
     id: int
+    user_id: UUID
     amount: Decimal
-    users: list[UserRead] = Field(default_factory=list)
+    effective_from: date
+    effective_to: date | None = None
+    status: str
+    mp2_account_number: str | None = None
+    notes: str | None = None
+    user: UserRead | None = None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class Mp2UpdateRequest(BaseModel):
+class Mp2EnrollmentCreateRequest(BaseModel):
+    user_id: UUID
     amount: Decimal = Field(ge=0)
-    user_ids: list[UUID] = Field(default_factory=list)
+    effective_from: date
+    effective_to: date | None = None
+    status: str = Field(default="active", pattern="^(active|ended)$")
+    mp2_account_number: str | None = Field(default=None, max_length=100)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class Mp2EnrollmentUpdateRequest(BaseModel):
+    amount: Decimal | None = Field(default=None, ge=0)
+    effective_from: date | None = None
+    effective_to: date | None = None
+    status: str | None = Field(default=None, pattern="^(active|ended)$")
+    mp2_account_number: str | None = Field(default=None, max_length=100)
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 class PayrollSettingUpdateRequest(BaseModel):
@@ -386,6 +432,41 @@ class PayslipSummaryComparisonRead(BaseModel):
     differences: dict[str, Decimal] = Field(default_factory=dict)
 
 
+class PayrollItemTypeRead(BaseModel):
+    id: int
+    code: str
+    name: str
+    category: str
+    behavior: str
+    taxable: bool
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PayrollItemTypeUpsertRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=255)
+    category: str = Field(pattern="^(earning|deduction)$")
+    behavior: str = Field(default="variable", pattern="^(fixed|formula|variable)$")
+    taxable: bool = False
+    is_active: bool = True
+    display_order: int = Field(default=0, ge=0)
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def normalize_item_type_code(cls, value: str) -> str:
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_item_type_name(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
 class PayrollRunRead(BaseModel):
     id: int
     month: int
@@ -409,6 +490,39 @@ class PayrollRunCreateRequest(BaseModel):
     year: int = Field(ge=2000)
     period: str = Field(pattern="^(1ST|2ND)$")
     policy_version_id: int = Field(ge=1)
+
+
+class PayrollRunInputRead(BaseModel):
+    id: int
+    payroll_run_id: int
+    user_id: UUID
+    payroll_item_type_id: int
+    amount: Decimal
+    remarks: str | None = None
+    source: str
+    status: str
+    created_by: UUID | None = None
+    approved_by: UUID | None = None
+    approved_at: datetime | None = None
+    item_type: PayrollItemTypeRead
+    user: UserRead | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PayrollRunInputCreateRequest(BaseModel):
+    user_id: UUID
+    payroll_item_type_id: int = Field(ge=1)
+    amount: Decimal = Field(ge=0)
+    remarks: str | None = Field(default=None, max_length=1000)
+
+
+class PayrollRunInputUpdateRequest(BaseModel):
+    payroll_item_type_id: int | None = Field(default=None, ge=1)
+    amount: Decimal | None = Field(default=None, ge=0)
+    remarks: str | None = Field(default=None, max_length=1000)
 
 
 class PayrollRunItemRead(BaseModel):

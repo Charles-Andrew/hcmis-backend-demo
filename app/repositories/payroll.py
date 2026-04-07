@@ -12,10 +12,13 @@ from app.models.department import Department
 from app.models.payroll import (
     FixedCompensation,
     Position,
-    Mp2Account,
+    Mp2Enrollment,
+    PayrollItemType,
     PayrollPolicyVersion,
     PayrollPolicySource,
     PayrollRun,
+    PayrollRunInput,
+    PayrollRunInputAudit,
     PayrollRunItem,
     PolicySssBracket,
     PolicyPhilhealthRule,
@@ -118,6 +121,10 @@ class PayrollPolicyVersionRepository:
         await self.session.refresh(item)
         return item
 
+    async def delete(self, item: PayrollPolicyVersion) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
 
 class PayrollPolicySourceRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -149,9 +156,12 @@ class PayrollPolicySourceRepository:
         items = [
             PayrollPolicySource(
                 policy_version_id=policy_version_id,
-                source_type=item["source_type"],
+                legacy_source_type=item["document_type"],
+                document_type=item["document_type"],
                 reference_code=item["reference_code"],
+                title=item["title"],
                 source_url=item["source_url"],
+                published_at=item.get("published_at"),
                 effective_from=item["effective_from"],
                 effective_to=item.get("effective_to"),
                 applied_by=applied_by,
@@ -198,41 +208,47 @@ class PayrollPolicyRuleRepository:
             [
                 PolicySssBracket(
                     policy_version_id=policy_version_id,
-                    min_compensation=0,
-                    max_compensation=999999,
-                    employee_share=0,
-                    employer_share=0,
+                    compensation_range_from=0,
+                    compensation_range_to=999999,
+                    monthly_salary_credit=0,
+                    employee_contribution=0,
+                    employer_contribution=0,
+                    ec_contribution=0,
+                    mpf_employee_contribution=0,
+                    mpf_employer_contribution=0,
                 ),
                 PolicyPhilhealthRule(
                     policy_version_id=policy_version_id,
-                    min_compensation=0,
-                    max_compensation=999999,
-                    rate=0,
+                    compensation_range_from=0,
+                    compensation_range_to=999999,
+                    premium_rate=0,
                     employee_share_ratio=0.5,
+                    employer_share_ratio=0.5,
                 ),
                 PolicyPagibigRule(
                     policy_version_id=policy_version_id,
-                    min_compensation=0,
-                    monthly_compensation_cap=100000,
+                    compensation_range_from=0,
+                    compensation_range_to=None,
+                    compensation_cap=100000,
                     employee_rate=0,
                     employer_rate=0,
-                    max_employee_share=0,
-                    max_employer_share=0,
+                    employee_share_cap=0,
+                    employer_share_cap=0,
                 ),
                 PolicyBirWithholdingBracket(
                     policy_version_id=policy_version_id,
                     payroll_period="SEMI_MONTHLY",
-                    min_compensation=0,
-                    max_compensation=None,
+                    compensation_range_from=0,
+                    compensation_range_to=None,
                     base_tax=0,
                     marginal_rate=0,
-                    over_amount=0,
+                    excess_over=0,
                 ),
                 PolicyMinimumWageOrder(
                     policy_version_id=policy_version_id,
                     region_code="NCR",
                     sector="GENERAL",
-                    daily_wage_amount=0,
+                    daily_rate=0,
                     effective_from=date(2026, 1, 1),
                     effective_to=None,
                     source_reference="To be calibrated against official wage order.",
@@ -245,24 +261,24 @@ class PayrollPolicyRuleRepository:
         sss_result = await self.session.execute(
             select(PolicySssBracket)
             .where(PolicySssBracket.policy_version_id == policy_version_id)
-            .order_by(PolicySssBracket.min_compensation.asc())
+            .order_by(PolicySssBracket.compensation_range_from.asc())
         )
         philhealth_result = await self.session.execute(
             select(PolicyPhilhealthRule)
             .where(PolicyPhilhealthRule.policy_version_id == policy_version_id)
-            .order_by(PolicyPhilhealthRule.min_compensation.asc())
+            .order_by(PolicyPhilhealthRule.compensation_range_from.asc())
         )
         pagibig_result = await self.session.execute(
             select(PolicyPagibigRule)
             .where(PolicyPagibigRule.policy_version_id == policy_version_id)
-            .order_by(PolicyPagibigRule.id.asc())
+            .order_by(PolicyPagibigRule.compensation_range_from.asc())
         )
         bir_result = await self.session.execute(
             select(PolicyBirWithholdingBracket)
             .where(PolicyBirWithholdingBracket.policy_version_id == policy_version_id)
             .order_by(
                 PolicyBirWithholdingBracket.payroll_period.asc(),
-                PolicyBirWithholdingBracket.min_compensation.asc(),
+                PolicyBirWithholdingBracket.compensation_range_from.asc(),
             )
         )
         wage_result = await self.session.execute(
@@ -289,23 +305,55 @@ class PayrollPolicyRuleRepository:
         await self.clear_policy_rules(policy_version_id)
         self.session.add_all(
             [
-                PolicySssBracket(policy_version_id=policy_version_id, **item)
+                PolicySssBracket(
+                    policy_version_id=policy_version_id,
+                    legacy_min_compensation=item["compensation_range_from"],
+                    legacy_max_compensation=item["compensation_range_to"],
+                    legacy_employee_share=item["employee_contribution"]
+                    + item["mpf_employee_contribution"],
+                    legacy_employer_share=item["employer_contribution"]
+                    + item["mpf_employer_contribution"],
+                    **item,
+                )
                 for item in payload["sss_brackets"]
             ]
             + [
-                PolicyPhilhealthRule(policy_version_id=policy_version_id, **item)
+                PolicyPhilhealthRule(
+                    policy_version_id=policy_version_id,
+                    legacy_min_compensation=item["compensation_range_from"],
+                    legacy_max_compensation=item["compensation_range_to"],
+                    legacy_rate=item["premium_rate"],
+                    **item,
+                )
                 for item in payload["philhealth_rules"]
             ]
             + [
-                PolicyPagibigRule(policy_version_id=policy_version_id, **item)
+                PolicyPagibigRule(
+                    policy_version_id=policy_version_id,
+                    legacy_min_compensation=item["compensation_range_from"],
+                    legacy_monthly_compensation_cap=item["compensation_cap"],
+                    legacy_max_employee_share=item["employee_share_cap"],
+                    legacy_max_employer_share=item["employer_share_cap"],
+                    **item,
+                )
                 for item in payload["pagibig_rules"]
             ]
             + [
-                PolicyBirWithholdingBracket(policy_version_id=policy_version_id, **item)
+                PolicyBirWithholdingBracket(
+                    policy_version_id=policy_version_id,
+                    legacy_min_compensation=item["compensation_range_from"],
+                    legacy_max_compensation=item["compensation_range_to"],
+                    legacy_over_amount=item["excess_over"],
+                    **item,
+                )
                 for item in payload["bir_withholding_brackets"]
             ]
             + [
-                PolicyMinimumWageOrder(policy_version_id=policy_version_id, **item)
+                PolicyMinimumWageOrder(
+                    policy_version_id=policy_version_id,
+                    legacy_daily_wage_amount=item["daily_rate"],
+                    **item,
+                )
                 for item in payload["minimum_wage_orders"]
             ]
         )
@@ -355,6 +403,120 @@ class PayrollRunRepository:
         return item
 
 
+class PayrollItemTypeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list(self, active_only: bool = False) -> List[PayrollItemType]:
+        statement = select(PayrollItemType).order_by(
+            PayrollItemType.display_order.asc(),
+            PayrollItemType.name.asc(),
+        )
+        if active_only:
+            statement = statement.where(PayrollItemType.is_active.is_(True))
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, item_type_id: int) -> PayrollItemType | None:
+        result = await self.session.execute(
+            select(PayrollItemType).where(PayrollItemType.id == item_type_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_code(self, code: str) -> PayrollItemType | None:
+        result = await self.session.execute(
+            select(PayrollItemType).where(func.lower(PayrollItemType.code) == code.lower())
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, item: PayrollItemType) -> PayrollItemType:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+    async def save(self, item: PayrollItemType) -> PayrollItemType:
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+
+class PayrollRunInputRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    @staticmethod
+    def _with_relationships(statement):
+        return statement.options(
+            selectinload(PayrollRunInput.item_type),
+            selectinload(PayrollRunInput.user).selectinload(User.department),
+            selectinload(PayrollRunInput.creator),
+            selectinload(PayrollRunInput.approver),
+        )
+
+    async def list(
+        self,
+        payroll_run_id: int,
+        user_id: UUID | None = None,
+    ) -> List[PayrollRunInput]:
+        statement = self._with_relationships(
+            select(PayrollRunInput).where(PayrollRunInput.payroll_run_id == payroll_run_id)
+        ).order_by(PayrollRunInput.created_at.asc(), PayrollRunInput.id.asc())
+        if user_id is not None:
+            statement = statement.where(PayrollRunInput.user_id == user_id)
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, run_input_id: int) -> PayrollRunInput | None:
+        result = await self.session.execute(
+            self._with_relationships(select(PayrollRunInput)).where(PayrollRunInput.id == run_input_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_run_user(
+        self,
+        payroll_run_id: int,
+        user_id: UUID,
+        approved_only: bool = False,
+    ) -> List[PayrollRunInput]:
+        statement = self._with_relationships(
+            select(PayrollRunInput).where(
+                PayrollRunInput.payroll_run_id == payroll_run_id,
+                PayrollRunInput.user_id == user_id,
+            )
+        ).order_by(PayrollRunInput.created_at.asc(), PayrollRunInput.id.asc())
+        if approved_only:
+            statement = statement.where(PayrollRunInput.status == "approved")
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def create(self, item: PayrollRunInput) -> PayrollRunInput:
+        self.session.add(item)
+        await self.session.commit()
+        refreshed = await self.get_by_id(item.id)
+        return refreshed if refreshed is not None else item
+
+    async def save(self, item: PayrollRunInput) -> PayrollRunInput:
+        await self.session.commit()
+        refreshed = await self.get_by_id(item.id)
+        return refreshed if refreshed is not None else item
+
+    async def delete(self, item: PayrollRunInput) -> None:
+        await self.session.delete(item)
+        await self.session.commit()
+
+
+class PayrollRunInputAuditRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(self, item: PayrollRunInputAudit) -> PayrollRunInputAudit:
+        self.session.add(item)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return item
+
+
 class PayrollRunItemRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -381,26 +543,65 @@ class PayrollRunItemRepository:
         return items
 
 
-class Mp2Repository:
+class Mp2EnrollmentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_first(self) -> Mp2Account | None:
+    async def list(self, status: str | None = None) -> List[Mp2Enrollment]:
+        statement = (
+            select(Mp2Enrollment)
+            .options(selectinload(Mp2Enrollment.user))
+            .order_by(Mp2Enrollment.effective_from.desc(), Mp2Enrollment.id.desc())
+        )
+        if status is not None:
+            statement = statement.where(Mp2Enrollment.status == status)
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, enrollment_id: int) -> Mp2Enrollment | None:
         result = await self.session.execute(
-            select(Mp2Account).options(selectinload(Mp2Account.users)).limit(1)
+            select(Mp2Enrollment)
+            .options(selectinload(Mp2Enrollment.user))
+            .where(Mp2Enrollment.id == enrollment_id)
         )
         return result.scalar_one_or_none()
 
-    async def create(self, mp2: Mp2Account) -> Mp2Account:
-        self.session.add(mp2)
-        await self.session.commit()
-        await self.session.refresh(mp2)
-        return mp2
+    async def get_active_for_user_on(
+        self,
+        user_id: UUID,
+        effective_date: date,
+    ) -> Mp2Enrollment | None:
+        result = await self.session.execute(
+            select(Mp2Enrollment)
+            .options(selectinload(Mp2Enrollment.user))
+            .where(
+                Mp2Enrollment.user_id == user_id,
+                Mp2Enrollment.status == "active",
+                Mp2Enrollment.effective_from <= effective_date,
+                or_(
+                    Mp2Enrollment.effective_to.is_(None),
+                    Mp2Enrollment.effective_to >= effective_date,
+                ),
+            )
+            .order_by(Mp2Enrollment.effective_from.desc(), Mp2Enrollment.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
-    async def save(self, mp2: Mp2Account) -> Mp2Account:
+    async def create(self, enrollment: Mp2Enrollment) -> Mp2Enrollment:
+        self.session.add(enrollment)
         await self.session.commit()
-        await self.session.refresh(mp2)
-        return mp2
+        refreshed = await self.get_by_id(enrollment.id)
+        if refreshed is None:
+            return enrollment
+        return refreshed
+
+    async def save(self, enrollment: Mp2Enrollment) -> Mp2Enrollment:
+        await self.session.commit()
+        refreshed = await self.get_by_id(enrollment.id)
+        if refreshed is None:
+            return enrollment
+        return refreshed
 
 
 class PositionRepository:
@@ -485,6 +686,14 @@ class PayslipRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    @staticmethod
+    def _with_relationships(statement):
+        return statement.options(
+            selectinload(Payslip.user).selectinload(User.department),
+            selectinload(Payslip.variable_compensations),
+            selectinload(Payslip.variable_deductions),
+        )
+
     async def list(
         self,
         user_id: UUID | None = None,
@@ -493,11 +702,7 @@ class PayslipRepository:
         period: str | None = None,
         released: bool | None = None,
     ) -> List[Payslip]:
-        statement = select(Payslip).options(
-            selectinload(Payslip.user).selectinload(User.department),
-            selectinload(Payslip.variable_compensations),
-            selectinload(Payslip.variable_deductions),
-        )
+        statement = self._with_relationships(select(Payslip))
         if user_id is not None:
             statement = statement.where(Payslip.user_id == user_id)
         if month is not None:
@@ -514,19 +719,13 @@ class PayslipRepository:
 
     async def get_by_id(self, payslip_id: int) -> Payslip | None:
         result = await self.session.execute(
-            select(Payslip)
-            .options(
-                selectinload(Payslip.user).selectinload(User.department),
-                selectinload(Payslip.variable_compensations),
-                selectinload(Payslip.variable_deductions),
-            )
-            .where(Payslip.id == payslip_id)
+            self._with_relationships(select(Payslip)).where(Payslip.id == payslip_id)
         )
         return result.scalar_one_or_none()
 
     async def get_by_identity(self, user_id: UUID, month: int, year: int, period: str) -> Payslip | None:
         result = await self.session.execute(
-            select(Payslip).where(
+            self._with_relationships(select(Payslip)).where(
                 Payslip.user_id == user_id,
                 Payslip.month == month,
                 Payslip.year == year,
@@ -539,12 +738,14 @@ class PayslipRepository:
         self.session.add(payslip)
         await self.session.commit()
         await self.session.refresh(payslip)
-        return payslip
+        loaded = await self.get_by_id(payslip.id)
+        return loaded if loaded is not None else payslip
 
     async def save(self, payslip: Payslip) -> Payslip:
         await self.session.commit()
         await self.session.refresh(payslip)
-        return payslip
+        loaded = await self.get_by_id(payslip.id)
+        return loaded if loaded is not None else payslip
 
     async def delete(self, payslip: Payslip) -> None:
         await self.session.delete(payslip)
@@ -571,6 +772,30 @@ class PayslipVariableCompensationRepository:
         await self.session.delete(item)
         await self.session.commit()
 
+    async def replace_for_payslip(
+        self,
+        payslip_id: int,
+        items: list[dict[str, Any]],
+    ) -> list[PayslipVariableCompensation]:
+        await self.session.execute(
+            delete(PayslipVariableCompensation).where(
+                PayslipVariableCompensation.payslip_id == payslip_id
+            )
+        )
+        created_items = [
+            PayslipVariableCompensation(
+                payslip_id=payslip_id,
+                name=item["name"],
+                amount=item["amount"],
+            )
+            for item in items
+        ]
+        self.session.add_all(created_items)
+        await self.session.commit()
+        for item in created_items:
+            await self.session.refresh(item)
+        return created_items
+
 
 class PayslipVariableDeductionRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -591,6 +816,30 @@ class PayslipVariableDeductionRepository:
     async def delete(self, item: PayslipVariableDeduction) -> None:
         await self.session.delete(item)
         await self.session.commit()
+
+    async def replace_for_payslip(
+        self,
+        payslip_id: int,
+        items: list[dict[str, Any]],
+    ) -> list[PayslipVariableDeduction]:
+        await self.session.execute(
+            delete(PayslipVariableDeduction).where(
+                PayslipVariableDeduction.payslip_id == payslip_id
+            )
+        )
+        created_items = [
+            PayslipVariableDeduction(
+                payslip_id=payslip_id,
+                name=item["name"],
+                amount=item["amount"],
+            )
+            for item in items
+        ]
+        self.session.add_all(created_items)
+        await self.session.commit()
+        for item in created_items:
+            await self.session.refresh(item)
+        return created_items
 
 
 class ThirteenthMonthPayRepository:

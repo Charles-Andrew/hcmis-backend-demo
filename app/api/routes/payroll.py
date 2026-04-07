@@ -4,10 +4,14 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
+from app.core.time import utc_now
 from app.models.payroll import (
     FixedCompensation,
+    Mp2Enrollment,
+    PayrollItemType,
     PayrollPolicyVersion,
     PayrollRun,
+    PayrollRunInput,
     PayrollRunItem,
     Position,
     Payslip,
@@ -21,10 +25,13 @@ from app.schemas.payroll import (
     FixedCompensationRead,
     FixedCompensationUpsertRequest,
     FixedCompensationUsersRequest,
+    Mp2EnrollmentCreateRequest,
+    Mp2EnrollmentRead,
+    Mp2EnrollmentUpdateRequest,
+    PayrollItemTypeRead,
+    PayrollItemTypeUpsertRequest,
     PositionRead,
     PositionUpsertRequest,
-    Mp2Read,
-    Mp2UpdateRequest,
     PayrollPolicyDetailRead,
     PayrollPolicyOfficialSeedRequest,
     PayrollPolicySourcesDetailRead,
@@ -34,6 +41,9 @@ from app.schemas.payroll import (
     PayrollPolicyVersionCreateRequest,
     PayrollPolicyVersionRead,
     PayrollRunCreateRequest,
+    PayrollRunInputCreateRequest,
+    PayrollRunInputRead,
+    PayrollRunInputUpdateRequest,
     PayrollRunItemRead,
     PayrollRunRead,
     PayslipCreateRequest,
@@ -53,7 +63,10 @@ from app.schemas.payroll import (
 )
 from app.services.payroll_engine import compare_payslip_summary
 from app.services.payroll_workflow import (
+    activate_policy_version,
+    approve_payroll_run,
     create_payroll_run,
+    delete_policy_version,
     create_policy_version,
     get_policy_version_rules,
     get_policy_version_sources,
@@ -72,29 +85,38 @@ from app.services.payroll import (
     add_payslip_variable_compensation,
     add_payslip_variable_deduction,
     add_thirteenth_month_pay_variable_deduction,
+    create_payroll_item_type,
+    create_payroll_run_input,
     create_fixed_compensation,
     create_position,
+    create_mp2_enrollment,
     create_thirteenth_month_pay,
     delete_fixed_compensation,
     delete_position,
     delete_thirteenth_month_pay,
-    get_mp2,
     get_payslips,
     get_or_create_payslip,
     get_payslip_summary,
+    list_payroll_item_types,
+    list_payroll_run_inputs,
     list_fixed_compensations,
+    list_mp2_enrollments,
     list_positions,
     list_thirteenth_month_pays,
     remove_payslip_variable_compensation,
     remove_payslip_variable_deduction,
     remove_thirteenth_month_pay_variable_deduction,
+    delete_payroll_run_input,
     toggle_payslip_release,
     toggle_thirteenth_month_pay_release,
+    update_payroll_item_type,
     update_fixed_compensation,
     update_fixed_compensation_users,
+    end_mp2_enrollment,
+    update_mp2_enrollment,
     update_position,
-    update_mp2,
     update_payslip,
+    update_payroll_run_input,
     update_thirteenth_month_pay,
 )
 
@@ -121,6 +143,30 @@ async def post_policy_version(
     current_user: User = Depends(require_staff_user),
 ) -> PayrollPolicyVersion:
     return await create_policy_version(session, payload)
+
+
+@router.delete(
+    "/policy-versions/{policy_version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_policy_version(
+    policy_version_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> None:
+    await delete_policy_version(session, policy_version_id)
+
+
+@router.post(
+    "/policy-versions/{policy_version_id}/activate",
+    response_model=PayrollPolicyVersionRead,
+)
+async def activate_selected_policy_version(
+    policy_version_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollPolicyVersion:
+    return await activate_policy_version(session, policy_version_id)
 
 
 @router.post(
@@ -204,23 +250,45 @@ async def put_policy_version_sources(
     )
 
 
-@router.get("/mp2", response_model=Mp2Read)
-async def read_mp2(
+@router.get("/mp2-enrollments", response_model=list[Mp2EnrollmentRead])
+async def read_mp2_enrollments(
+    status: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> Mp2Read:
-    mp2 = await get_mp2(session)
-    return Mp2Read.model_validate(mp2)
+) -> list[Mp2Enrollment]:
+    return await list_mp2_enrollments(session, status=status)
 
 
-@router.put("/mp2", response_model=Mp2Read)
-async def put_mp2(
-    payload: Mp2UpdateRequest,
+@router.post(
+    "/mp2-enrollments",
+    response_model=Mp2EnrollmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_mp2_enrollment(
+    payload: Mp2EnrollmentCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> Mp2Read:
-    mp2 = await update_mp2(session, amount=payload.amount, user_ids=payload.user_ids)
-    return Mp2Read.model_validate(mp2)
+) -> Mp2Enrollment:
+    return await create_mp2_enrollment(session, payload)
+
+
+@router.patch("/mp2-enrollments/{enrollment_id}", response_model=Mp2EnrollmentRead)
+async def patch_mp2_enrollment(
+    enrollment_id: int,
+    payload: Mp2EnrollmentUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> Mp2Enrollment:
+    return await update_mp2_enrollment(session, enrollment_id, payload)
+
+
+@router.post("/mp2-enrollments/{enrollment_id}/end", response_model=Mp2EnrollmentRead)
+async def post_end_mp2_enrollment(
+    enrollment_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> Mp2Enrollment:
+    return await end_mp2_enrollment(session, enrollment_id, utc_now().date())
 
 
 @router.get("/positions", response_model=list[PositionRead])
@@ -258,6 +326,38 @@ async def remove_position(
     current_user: User = Depends(require_staff_user),
 ) -> None:
     await delete_position(session, position_id)
+
+
+@router.get("/item-types", response_model=list[PayrollItemTypeRead])
+async def read_payroll_item_types(
+    active_only: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[PayrollItemType]:
+    return await list_payroll_item_types(session, active_only=active_only)
+
+
+@router.post(
+    "/item-types",
+    response_model=PayrollItemTypeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_payroll_item_type(
+    payload: PayrollItemTypeUpsertRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollItemType:
+    return await create_payroll_item_type(session, payload)
+
+
+@router.patch("/item-types/{item_type_id}", response_model=PayrollItemTypeRead)
+async def patch_payroll_item_type(
+    item_type_id: int,
+    payload: PayrollItemTypeUpsertRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollItemType:
+    return await update_payroll_item_type(session, item_type_id, payload)
 
 
 @router.get("/fixed-compensations", response_model=list[FixedCompensationRead])
@@ -343,6 +443,15 @@ async def validate_run(
     return await validate_payroll_run(session, payroll_run_id)
 
 
+@router.post("/runs/{payroll_run_id}/approve", response_model=PayrollRunRead)
+async def approve_run(
+    payroll_run_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollRun:
+    return await approve_payroll_run(session, payroll_run_id, approved_by=current_user.id)
+
+
 @router.post("/runs/{payroll_run_id}/post", response_model=PayrollRunRead)
 async def post_run(
     payroll_run_id: int,
@@ -368,6 +477,54 @@ async def read_payroll_run_items(
     current_user: User = Depends(require_staff_user),
 ) -> list[PayrollRunItem]:
     return await list_payroll_run_items(session, payroll_run_id)
+
+
+@router.get("/runs/{payroll_run_id}/inputs", response_model=list[PayrollRunInputRead])
+async def read_payroll_run_inputs(
+    payroll_run_id: int,
+    user_id: UUID | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[PayrollRunInput]:
+    return await list_payroll_run_inputs(session, payroll_run_id, user_id=user_id)
+
+
+@router.post(
+    "/runs/{payroll_run_id}/inputs",
+    response_model=PayrollRunInputRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_payroll_run_input(
+    payroll_run_id: int,
+    payload: PayrollRunInputCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollRunInput:
+    return await create_payroll_run_input(
+        session,
+        payroll_run_id,
+        payload,
+        created_by=current_user.id,
+    )
+
+
+@router.patch("/run-inputs/{run_input_id}", response_model=PayrollRunInputRead)
+async def patch_payroll_run_input(
+    run_input_id: int,
+    payload: PayrollRunInputUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> PayrollRunInput:
+    return await update_payroll_run_input(session, run_input_id, payload, actor_id=current_user.id)
+
+
+@router.delete("/run-inputs/{run_input_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_payroll_run_input(
+    run_input_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> None:
+    await delete_payroll_run_input(session, run_input_id, actor_id=current_user.id)
 
 
 @router.get("/payslips", response_model=list[PayslipRead])

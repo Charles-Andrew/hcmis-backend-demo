@@ -9,6 +9,7 @@ import anyio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
+from app.core.exceptions import ConflictError
 from app.models.payroll import PayrollPolicyVersion, PayrollRun, PayrollRunItem, Payslip
 from app.schemas.payroll import (
     PayrollComputationRead,
@@ -58,6 +59,9 @@ class FakePolicyVersionRepository:
         item.updated_at = utc_now()
         self.items[item.id] = item
         return item
+
+    async def delete(self, item: PayrollPolicyVersion):
+        self.items.pop(item.id, None)
 
 
 class FakePolicyRuleRepository:
@@ -260,7 +264,15 @@ def test_seed_policy_and_validate_run(monkeypatch):
         ),
     )
     assert seeded.id == 1
+    assert seeded.is_active is False
     assert FakePolicyRuleRepository.seeded_policy_ids == [1]
+
+    activated = anyio.run(
+        payroll_workflow.activate_policy_version,
+        cast(AsyncSession, object()),
+        seeded.id,
+    )
+    assert activated.is_active is True
 
     run = anyio.run(
         payroll_workflow.create_payroll_run,
@@ -320,10 +332,14 @@ def test_update_policy_rules(monkeypatch):
         PayrollPolicyRulesUpdateRequest(
             sss_brackets=[
                 PolicySssBracketWrite(
-                    min_compensation=Decimal("0.00"),
-                    max_compensation=Decimal("999999.00"),
-                    employee_share=Decimal("500.00"),
-                    employer_share=Decimal("1000.00"),
+                    compensation_range_from=Decimal("0.00"),
+                    compensation_range_to=Decimal("999999.00"),
+                    monthly_salary_credit=Decimal("10000.00"),
+                    employee_contribution=Decimal("500.00"),
+                    employer_contribution=Decimal("1000.00"),
+                    ec_contribution=Decimal("10.00"),
+                    mpf_employee_contribution=Decimal("0.00"),
+                    mpf_employer_contribution=Decimal("0.00"),
                 )
             ],
             philhealth_rules=[],
@@ -355,13 +371,89 @@ def test_seed_official_core(monkeypatch):
         ),
     )
     assert seeded.id == 1
+    assert seeded.is_active is False
     rules = FakePolicyRuleRepository.rules_by_policy_id[seeded.id]
     assert len(rules["sss_brackets"]) >= 50
+    assert rules["sss_brackets"][0]["ec_contribution"] == Decimal("10.00")
+    assert rules["sss_brackets"][-1]["ec_contribution"] == Decimal("30.00")
     assert len(rules["philhealth_rules"]) == 1
+    assert rules["philhealth_rules"][0]["premium_rate"] == Decimal("0.05")
     assert len(rules["pagibig_rules"]) == 2
+    assert rules["pagibig_rules"][1]["compensation_cap"] == Decimal("10000.00")
+    assert rules["pagibig_rules"][1]["employee_share_cap"] == Decimal("200.00")
     assert len(rules["bir_withholding_brackets"]) == 6
     assert len(rules["minimum_wage_orders"]) == 2
-    assert len(FakePolicySourceRepository.sources_by_policy_id[seeded.id]) >= 4
+    assert rules["minimum_wage_orders"][0]["effective_from"] == date(2025, 7, 18)
+    assert len(FakePolicySourceRepository.sources_by_policy_id[seeded.id]) >= 7
+
+
+def test_activate_policy_version(monkeypatch):
+    _reset()
+    monkeypatch.setattr(
+        payroll_workflow, "PayrollPolicyVersionRepository", FakePolicyVersionRepository
+    )
+
+    first = anyio.run(
+        payroll_workflow.create_policy_version,
+        cast(AsyncSession, object()),
+        PayrollPolicyVersionCreateRequest(
+            policy_key="PH_STATUTORY",
+            version_label="PH-2025-A",
+            effective_from=date(2025, 1, 1),
+            effective_to=None,
+            is_active=True,
+        ),
+    )
+    second = anyio.run(
+        payroll_workflow.create_policy_version,
+        cast(AsyncSession, object()),
+        PayrollPolicyVersionCreateRequest(
+            policy_key="PH_STATUTORY",
+            version_label="PH-2025-B",
+            effective_from=date(2025, 7, 1),
+            effective_to=None,
+            is_active=False,
+        ),
+    )
+
+    activated = anyio.run(
+        payroll_workflow.activate_policy_version,
+        cast(AsyncSession, object()),
+        second.id,
+    )
+
+    assert activated.id == second.id
+    assert FakePolicyVersionRepository.items[first.id].is_active is False
+    assert FakePolicyVersionRepository.items[second.id].is_active is True
+
+
+def test_delete_active_policy_version_rejected(monkeypatch):
+    _reset()
+    monkeypatch.setattr(
+        payroll_workflow, "PayrollPolicyVersionRepository", FakePolicyVersionRepository
+    )
+
+    created = anyio.run(
+        payroll_workflow.create_policy_version,
+        cast(AsyncSession, object()),
+        PayrollPolicyVersionCreateRequest(
+            policy_key="PH_STATUTORY",
+            version_label="PH-2025-ACTIVE",
+            effective_from=date(2025, 1, 1),
+            effective_to=None,
+            is_active=True,
+        ),
+    )
+
+    try:
+        anyio.run(
+            payroll_workflow.delete_policy_version,
+            cast(AsyncSession, object()),
+            created.id,
+        )
+        assert False, "Expected ConflictError for active policy delete."
+    except ConflictError as error:
+        assert str(error) == "Cannot delete an active payroll policy version."
 
 
 def test_update_policy_sources(monkeypatch):
@@ -389,9 +481,11 @@ def test_update_policy_sources(monkeypatch):
         PayrollPolicySourcesUpdateRequest(
             sources=[
                 PayrollPolicySourceWrite(
-                    source_type="BIR",
+                    document_type="BIR Revenue Regulation",
                     reference_code="RR 11-2018",
+                    title="BIR Revenue Regulation No. 11-2018",
                     source_url="https://bir-cdn.bir.gov.ph/local/pdf/RR%20No.%2011-2018.pdf",
+                    published_at=None,
                     effective_from=date(2026, 1, 1),
                     effective_to=None,
                 )
@@ -401,4 +495,4 @@ def test_update_policy_sources(monkeypatch):
     )
     assert detail.version.id == created.id
     assert len(detail.sources) == 1
-    assert detail.sources[0].source_type == "BIR"
+    assert detail.sources[0].document_type == "BIR Revenue Regulation"
