@@ -178,6 +178,16 @@ class AttendanceRecord(Base):
     user = relationship("User", back_populates="attendance_records")
 
 
+class DeletedAttendanceRecord(Base):
+    __tablename__ = "deleted_attendance_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    raw_event_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class OvertimeRequest(Base):
     __tablename__ = "overtime_requests"
 

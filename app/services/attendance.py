@@ -446,6 +446,9 @@ async def create_attendance_record(
         by_raw_event = await repository.get_by_raw_event_id(payload.raw_event_id)
         if by_raw_event is not None:
             raise ConflictError("Attendance record already exists.")
+        deleted_raw_event = await repository.get_deleted_by_raw_event_id(payload.raw_event_id)
+        if deleted_raw_event is not None:
+            raise ConflictError("Attendance record was deleted and cannot be restored.")
     duplicate = await repository.get_duplicate(
         payload.user_id, _ensure_aware(payload.timestamp), payload.punch
     )
@@ -505,7 +508,7 @@ async def delete_attendance_record(session: AsyncSession, record_id: int) -> Non
     record = await repository.get_by_id(record_id)
     if record is None:
         raise NotFoundError("Attendance record not found.")
-    await repository.delete(record)
+    await repository.delete(record, tombstone_raw_event_id=record.raw_event_id)
 
 
 async def list_holidays(session: AsyncSession, year: int | None = None) -> list[Holiday]:

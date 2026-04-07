@@ -108,6 +108,7 @@ class FakeShiftTemplateRepository:
 
 class FakeAttendanceRecordRepository:
     records: dict[int, AttendanceRecord] = {}
+    deleted_raw_event_ids: set[str] = set()
     next_id = 1
 
     def __init__(self, session):
@@ -139,6 +140,11 @@ class FakeAttendanceRecordRepository:
                 return record
         return None
 
+    async def get_deleted_by_raw_event_id(self, raw_event_id: str):
+        if raw_event_id in self.deleted_raw_event_ids:
+            return object()
+        return None
+
     async def create(self, record: AttendanceRecord):
         record.id = self.next_id
         self.next_id += 1
@@ -152,7 +158,9 @@ class FakeAttendanceRecordRepository:
         self.records[record.id] = record
         return record
 
-    async def delete(self, record: AttendanceRecord):
+    async def delete(self, record: AttendanceRecord, *, tombstone_raw_event_id: str | None = None):
+        if tombstone_raw_event_id:
+            self.deleted_raw_event_ids.add(tombstone_raw_event_id)
         self.records.pop(record.id, None)
 
 
@@ -524,6 +532,7 @@ def setup_function():
     FakeShiftTemplateRepository.shifts = {}
     FakeShiftTemplateRepository.next_id = 1
     FakeAttendanceRecordRepository.records = {}
+    FakeAttendanceRecordRepository.deleted_raw_event_ids = set()
     FakeAttendanceRecordRepository.next_id = 1
     FakeEmployeeShiftAssignmentRepository.schedules = {}
     FakeEmployeeShiftAssignmentRepository.next_id = 1
@@ -874,6 +883,52 @@ def test_create_attendance_record_rejects_duplicate_raw_event_id(monkeypatch):
         pass
     else:
         raise AssertionError("Expected ConflictError")
+
+
+def test_create_attendance_record_rejects_deleted_raw_event_id(monkeypatch):
+    user = _make_user(UUID(int=1))
+    FakeUserRepository.users = {user.id: user}
+    FakeAttendanceRecordRepository.deleted_raw_event_ids = {"raw-deleted-check"}
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
+
+    try:
+        anyio.run(
+            _create_attendance_record,
+            AttendanceRecordCreateRequest(
+                user_id=UUID(int=1),
+                device_user_id=5,
+                raw_event_id="raw-deleted-check",
+                timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
+                punch="IN",
+            ),
+        )
+    except ConflictError as exc:
+        assert str(exc) == "Attendance record was deleted and cannot be restored."
+    else:
+        raise AssertionError("Expected ConflictError")
+
+
+def test_delete_attendance_record_preserves_raw_event_id_tombstone(monkeypatch):
+    user = _make_user(UUID(int=1))
+    record = AttendanceRecord(
+        id=1,
+        user_id=user.id,
+        device_user_id=5,
+        raw_event_id="raw-delete-me",
+        timestamp=datetime(2026, 3, 24, 8, 0, tzinfo=UTC),
+        punch="IN",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    FakeUserRepository.users = {user.id: user}
+    FakeAttendanceRecordRepository.records = {record.id: record}
+    monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
+
+    anyio.run(attendance_service.delete_attendance_record, cast(AsyncSession, object()), 1)
+
+    assert 1 not in FakeAttendanceRecordRepository.records
+    assert "raw-delete-me" in FakeAttendanceRecordRepository.deleted_raw_event_ids
 
 
 def test_create_holiday_and_overtime_flow(monkeypatch):

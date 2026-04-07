@@ -11,6 +11,7 @@ from app.models.attendance import (
     AttendanceRecord,
     BridgeCommand,
     BridgeUserSnapshot,
+    DeletedAttendanceRecord,
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
@@ -110,6 +111,14 @@ class AttendanceRecordRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_deleted_by_raw_event_id(self, raw_event_id: str) -> DeletedAttendanceRecord | None:
+        result = await self.session.execute(
+            select(DeletedAttendanceRecord).where(
+                DeletedAttendanceRecord.raw_event_id == raw_event_id
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create(self, record: AttendanceRecord) -> AttendanceRecord:
         self.session.add(record)
         await self.session.commit()
@@ -121,7 +130,16 @@ class AttendanceRecordRepository:
         await self.session.refresh(record)
         return record
 
-    async def delete(self, record: AttendanceRecord) -> None:
+    async def delete(
+        self,
+        record: AttendanceRecord,
+        *,
+        tombstone_raw_event_id: str | None = None,
+    ) -> None:
+        if tombstone_raw_event_id:
+            existing = await self.get_deleted_by_raw_event_id(tombstone_raw_event_id)
+            if existing is None:
+                self.session.add(DeletedAttendanceRecord(raw_event_id=tombstone_raw_event_id))
         await self.session.delete(record)
         await self.session.commit()
 
