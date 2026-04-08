@@ -24,8 +24,8 @@ from app.models.payroll import (
     Payslip,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
-    ThirteenthMonthPay,
-    ThirteenthMonthPayVariableDeduction,
+    ThirteenthMonthAdjustment,
+    ThirteenthMonthPayout,
 )
 from app.models.user import User
 
@@ -658,95 +658,95 @@ class PayslipVariableDeductionRepository:
         return created_items
 
 
-class ThirteenthMonthPayRepository:
+class ThirteenthMonthPayoutRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def list(
         self,
         user_id: UUID | None = None,
-        month: int | None = None,
         year: int | None = None,
-        released: bool | None = None,
-    ) -> List[ThirteenthMonthPay]:
-        statement = select(ThirteenthMonthPay).options(
-            selectinload(ThirteenthMonthPay.user).selectinload(User.department),
-            selectinload(ThirteenthMonthPay.variable_deductions),
+        status: str | None = None,
+    ) -> List[ThirteenthMonthPayout]:
+        statement = select(ThirteenthMonthPayout).options(
+            selectinload(ThirteenthMonthPayout.user).selectinload(User.department),
+            selectinload(ThirteenthMonthPayout.adjustments),
         )
         if user_id is not None:
-            statement = statement.where(ThirteenthMonthPay.user_id == user_id)
-        if month is not None:
-            statement = statement.where(ThirteenthMonthPay.month == month)
+            statement = statement.where(ThirteenthMonthPayout.user_id == user_id)
         if year is not None:
-            statement = statement.where(ThirteenthMonthPay.year == year)
-        if released is not None:
-            statement = statement.where(ThirteenthMonthPay.released.is_(released))
+            statement = statement.where(ThirteenthMonthPayout.year == year)
+        if status is not None:
+            statement = statement.where(ThirteenthMonthPayout.status == status)
         statement = statement.order_by(
-            ThirteenthMonthPay.year.desc(),
-            ThirteenthMonthPay.month.desc(),
+            ThirteenthMonthPayout.year.desc(),
+            ThirteenthMonthPayout.id.desc(),
         )
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
-    async def get_by_id(self, item_id: int) -> ThirteenthMonthPay | None:
+    async def get_by_id(self, item_id: int) -> ThirteenthMonthPayout | None:
         result = await self.session.execute(
-            select(ThirteenthMonthPay)
+            select(ThirteenthMonthPayout)
             .options(
-                selectinload(ThirteenthMonthPay.user).selectinload(User.department),
-                selectinload(ThirteenthMonthPay.variable_deductions),
+                selectinload(ThirteenthMonthPayout.user).selectinload(User.department),
+                selectinload(ThirteenthMonthPayout.adjustments),
             )
-            .where(ThirteenthMonthPay.id == item_id)
+            .where(ThirteenthMonthPayout.id == item_id)
         )
         return result.scalar_one_or_none()
 
-    async def get_by_identity(
-        self, user_id: UUID, month: int, year: int
-    ) -> ThirteenthMonthPay | None:
+    async def get_by_user_year(self, user_id: UUID, year: int) -> ThirteenthMonthPayout | None:
         result = await self.session.execute(
-            select(ThirteenthMonthPay).where(
-                ThirteenthMonthPay.user_id == user_id,
-                ThirteenthMonthPay.month == month,
-                ThirteenthMonthPay.year == year,
+            select(ThirteenthMonthPayout).where(
+                ThirteenthMonthPayout.user_id == user_id,
+                ThirteenthMonthPayout.year == year,
             )
         )
         return result.scalar_one_or_none()
 
-    async def create(self, item: ThirteenthMonthPay) -> ThirteenthMonthPay:
+    async def create(self, item: ThirteenthMonthPayout) -> ThirteenthMonthPayout:
         self.session.add(item)
         await self.session.commit()
         await self.session.refresh(item)
         return item
 
-    async def save(self, item: ThirteenthMonthPay) -> ThirteenthMonthPay:
+    async def save(self, item: ThirteenthMonthPayout) -> ThirteenthMonthPayout:
         await self.session.commit()
         await self.session.refresh(item)
         return item
 
-    async def delete(self, item: ThirteenthMonthPay) -> None:
+    async def delete(self, item: ThirteenthMonthPayout) -> None:
         await self.session.delete(item)
         await self.session.commit()
 
 
-class ThirteenthMonthPayVariableDeductionRepository:
+class ThirteenthMonthAdjustmentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(
-        self, item: ThirteenthMonthPayVariableDeduction
-    ) -> ThirteenthMonthPayVariableDeduction:
+    async def create(self, item: ThirteenthMonthAdjustment) -> ThirteenthMonthAdjustment:
         self.session.add(item)
         await self.session.commit()
         await self.session.refresh(item)
         return item
 
-    async def get_by_id(self, item_id: int) -> ThirteenthMonthPayVariableDeduction | None:
+    async def get_by_id(self, item_id: int) -> ThirteenthMonthAdjustment | None:
         result = await self.session.execute(
-            select(ThirteenthMonthPayVariableDeduction).where(
-                ThirteenthMonthPayVariableDeduction.id == item_id
+            select(ThirteenthMonthAdjustment).where(
+                ThirteenthMonthAdjustment.id == item_id
             )
         )
         return result.scalar_one_or_none()
 
-    async def delete(self, item: ThirteenthMonthPayVariableDeduction) -> None:
+    async def list_by_payout_id(self, payout_id: int) -> list[ThirteenthMonthAdjustment]:
+        result = await self.session.execute(
+            select(ThirteenthMonthAdjustment)
+            .where(ThirteenthMonthAdjustment.payout_id == payout_id)
+            .order_by(ThirteenthMonthAdjustment.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def delete(self, item: ThirteenthMonthAdjustment) -> None:
         await self.session.delete(item)
         await self.session.commit()

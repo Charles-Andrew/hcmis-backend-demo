@@ -15,7 +15,8 @@ from app.models.payroll import (
     PayrollSetting,
     Payslip,
     Position,
-    ThirteenthMonthPay,
+    ThirteenthMonthAdjustment,
+    ThirteenthMonthPayout,
 )
 from app.models.user import User, UserPositionAssignment
 from app.schemas.payroll import (
@@ -25,9 +26,8 @@ from app.schemas.payroll import (
     PayslipCreateRequest,
     PayslipVariableCompensationUpsertRequest,
     PayslipVariableDeductionUpsertRequest,
-    ThirteenthMonthPayCreateRequest,
-    ThirteenthMonthPayUpdateRequest,
-    ThirteenthMonthPayVariableDeductionUpsertRequest,
+    ThirteenthMonthAdjustmentCreateRequest,
+    ThirteenthMonthGenerateRequest,
 )
 from app.services import payroll_engine
 from app.services import payroll as payroll_service
@@ -283,50 +283,67 @@ class FakeUserPositionAssignmentRepository:
         return candidates[0] if candidates else None
 
 
-class FakeThirteenthMonthPayRepository:
-    items: dict[int, ThirteenthMonthPay] = {}
+class FakeThirteenthMonthPayoutRepository:
+    items: dict[int, ThirteenthMonthPayout] = {}
     next_id = 1
 
     def __init__(self, session):
         self.session = session
 
-    async def list(self, user_id=None, month=None, year=None, released=None):
+    async def list(self, user_id=None, year=None, status=None):
         items = list(self.items.values())
         if user_id is not None:
             items = [item for item in items if item.user_id == user_id]
-        if month is not None:
-            items = [item for item in items if item.month == month]
         if year is not None:
             items = [item for item in items if item.year == year]
-        if released is not None:
-            items = [item for item in items if item.released == released]
+        if status is not None:
+            items = [item for item in items if item.status == status]
         return items
 
     async def get_by_id(self, item_id: int):
         return self.items.get(item_id)
 
-    async def get_by_identity(self, user_id: UUID, month: int, year: int):
+    async def get_by_user_year(self, user_id: UUID, year: int):
         for item in self.items.values():
-            if item.user_id == user_id and item.month == month and item.year == year:
+            if item.user_id == user_id and item.year == year:
                 return item
         return None
 
-    async def create(self, item: ThirteenthMonthPay):
+    async def create(self, item: ThirteenthMonthPayout):
         item.id = self.next_id
         self.next_id += 1
         self.items[item.id] = item
         return item
 
-    async def save(self, item: ThirteenthMonthPay):
+    async def save(self, item: ThirteenthMonthPayout):
         self.items[item.id] = item
         return item
 
-    async def delete(self, item: ThirteenthMonthPay):
+    async def delete(self, item: ThirteenthMonthPayout):
         self.items.pop(item.id, None)
 
 
-class FakeThirteenthMonthPayVariableDeductionRepository(FakePayslipVariableCompensationRepository):
-    pass
+class FakeThirteenthMonthAdjustmentRepository:
+    items: dict[int, ThirteenthMonthAdjustment] = {}
+    next_id = 1
+
+    def __init__(self, session):
+        self.session = session
+
+    async def create(self, item):
+        item.id = self.next_id
+        self.next_id += 1
+        self.items[item.id] = item
+        return item
+
+    async def get_by_id(self, item_id: int):
+        return self.items.get(item_id)
+
+    async def list_by_payout_id(self, payout_id: int):
+        return [item for item in self.items.values() if item.payout_id == payout_id]
+
+    async def delete(self, item):
+        self.items.pop(item.id, None)
 
 
 def _reset():
@@ -345,10 +362,10 @@ def _reset():
     FakePayslipVariableDeductionRepository.next_id = 1
     FakeUserPositionAssignmentRepository.items = {}
     FakeUserPositionAssignmentRepository.next_id = 1
-    FakeThirteenthMonthPayRepository.items = {}
-    FakeThirteenthMonthPayRepository.next_id = 1
-    FakeThirteenthMonthPayVariableDeductionRepository.items = {}
-    FakeThirteenthMonthPayVariableDeductionRepository.next_id = 1
+    FakeThirteenthMonthPayoutRepository.items = {}
+    FakeThirteenthMonthPayoutRepository.next_id = 1
+    FakeThirteenthMonthAdjustmentRepository.items = {}
+    FakeThirteenthMonthAdjustmentRepository.next_id = 1
     FakeUserRepository.users = {}
     FakeDepartmentRepository.departments = {}
 
@@ -397,6 +414,7 @@ def test_payroll_settings_and_positions(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
     monkeypatch.setattr(
         payroll_service,
         "UserPositionAssignmentRepository",
@@ -454,6 +472,7 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
     monkeypatch.setattr(
         payroll_service,
         "UserPositionAssignmentRepository",
@@ -833,40 +852,62 @@ def test_second_cutoff_inherits_month_schedule_from_released_first_cutoff(monkey
     assert second_cutoff.automatic_deduction_schedule == "SPLIT_BOTH_CUTOFFS"
 
 
-def test_thirteenth_month_pay_flow(monkeypatch):
+def test_thirteenth_month_payout_flow(monkeypatch):
     _reset()
     _seed()
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
     monkeypatch.setattr(
         payroll_service,
         "UserPositionAssignmentRepository",
         FakeUserPositionAssignmentRepository,
     )
-    monkeypatch.setattr(payroll_service, "ThirteenthMonthPayRepository", FakeThirteenthMonthPayRepository)
-    monkeypatch.setattr(payroll_service, "ThirteenthMonthPayVariableDeductionRepository", FakeThirteenthMonthPayVariableDeductionRepository)
+    monkeypatch.setattr(payroll_service, "ThirteenthMonthPayoutRepository", FakeThirteenthMonthPayoutRepository)
+    monkeypatch.setattr(payroll_service, "ThirteenthMonthAdjustmentRepository", FakeThirteenthMonthAdjustmentRepository)
 
-    pay = anyio.run(
-        payroll_service.create_thirteenth_month_pay,
-        cast(AsyncSession, object()),
-        ThirteenthMonthPayCreateRequest(user_id=UUID(int=1), amount=Decimal("5000.00"), month=12, year=2026),
-    )
-    assert pay.amount == Decimal("5000.00")
+    payslip_repository = FakePayslipRepository(cast(AsyncSession, object()))
+    for month in range(1, 13):
+        payslip = Payslip(
+            user_id=UUID(int=1),
+            month=month,
+            year=2026,
+            period="2ND",
+            salary=Decimal("12000.00"),
+            released=month % 2 == 0,
+        )
+        anyio.run(payslip_repository.create, payslip)
 
-    updated = anyio.run(
-        payroll_service.update_thirteenth_month_pay,
+    generated = anyio.run(
+        payroll_service.generate_thirteenth_month_payouts,
         cast(AsyncSession, object()),
-        pay.id,
-        ThirteenthMonthPayUpdateRequest(amount=Decimal("5500.00")),
+        ThirteenthMonthGenerateRequest(year=2026),
     )
-    assert updated.amount == Decimal("5500.00")
+    assert len(generated) == 1
+    payout = generated[0]
+    assert payout.gross_amount == Decimal("12000.00")
+    assert payout.net_amount == Decimal("12000.00")
 
-    deduction = anyio.run(
-        payroll_service.add_thirteenth_month_pay_variable_deduction,
+    adjusted = anyio.run(
+        payroll_service.add_thirteenth_month_adjustment,
         cast(AsyncSession, object()),
-        pay.id,
-        ThirteenthMonthPayVariableDeductionUpsertRequest(name="Gov Loan", amount=Decimal("500.00")),
+        payout.id,
+        ThirteenthMonthAdjustmentCreateRequest(
+            type="DEDUCT",
+            label="Gov Loan",
+            amount=Decimal("500.00"),
+            reason="Loan offset",
+        ),
     )
-    assert deduction.amount == Decimal("500.00")
+    assert adjusted.total_deductions == Decimal("500.00")
+    assert adjusted.net_amount == Decimal("11500.00")
+
+    released = anyio.run(
+        payroll_service.release_thirteenth_month_payout,
+        cast(AsyncSession, object()),
+        payout.id,
+    )
+    assert released.status == "RELEASED"
+    assert released.released_at is not None

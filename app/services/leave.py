@@ -3,12 +3,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.capabilities import is_staff_user
-from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError, PermissionDeniedError
 from app.core.time import utc_now
 from app.models.leave import (
     LeaveApprover,
     LeaveCredit,
     LeaveRequest,
+    LeaveRequestApprover,
     LeaveRequestStatus,
     LeaveType,
 )
@@ -49,6 +50,50 @@ def _normalize_approval_chain(
     first = chain[0] if chain else None
     second = chain[1] if len(chain) > 1 else None
     return first, second
+
+
+def _normalize_role(role: str | None) -> str:
+    normalized = (role or "EMP").strip().upper()
+    return normalized or "EMP"
+
+
+def _approver_role_label(role: str) -> str:
+    labels = {
+        "DH": "Department Head",
+        "DIR": "Director",
+        "PRES": "President",
+        "HR": "HR",
+    }
+    return labels.get(role, role)
+
+
+async def _validate_leave_approver_assignment(
+    *,
+    user_repository: UserRepository,
+    approver_id: UUID | None,
+    expected_role: str,
+    approver_label: str,
+    department_id: int,
+) -> None:
+    if approver_id is None:
+        return
+
+    user = await user_repository.get_by_id(approver_id)
+    if user is None:
+        raise NotFoundError("Approver user not found.")
+
+    if not user.is_active:
+        raise BadRequestError(f"{approver_label} must be an active user.")
+
+    role = _normalize_role(user.role)
+    if role != expected_role:
+        expected_role_label = _approver_role_label(expected_role)
+        raise BadRequestError(f"{approver_label} must have the {expected_role_label} role.")
+
+    if expected_role == "DH" and user.department_id != department_id:
+        raise BadRequestError(
+            "Department approver must belong to the same department."
+        )
 
 
 async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
@@ -95,6 +140,62 @@ async def _get_approval_chain(
     if first_approver_id is None:
         raise NotFoundError("No leave approver is configured for this user.")
     return first_approver_id, second_approver_id
+
+
+async def _get_approval_pool(session: AsyncSession, user: User) -> list[UUID]:
+    if user.department_id is None:
+        raise ConflictError("User is not assigned to a department.")
+
+    approver_settings = await LeaveApproverRepository(session).get_by_department_id(
+        user.department_id
+    )
+    if approver_settings is None:
+        raise NotFoundError("Leave approver settings not found for this department.")
+
+    role = _normalize_role(user.role)
+    if role == "DH":
+        candidate_ids = [
+            approver_settings.director_approver_id,
+            approver_settings.president_approver_id,
+            approver_settings.hr_approver_id,
+        ]
+    elif role == "DIR":
+        candidate_ids = [
+            approver_settings.president_approver_id,
+            approver_settings.hr_approver_id,
+        ]
+    elif role == "PRES":
+        candidate_ids = [approver_settings.hr_approver_id]
+    elif role == "HR":
+        candidate_ids = [
+            approver_settings.president_approver_id,
+            approver_settings.director_approver_id,
+            approver_settings.department_approver_id,
+        ]
+    else:
+        candidate_ids = [
+            approver_settings.department_approver_id,
+            approver_settings.director_approver_id,
+            approver_settings.president_approver_id,
+            approver_settings.hr_approver_id,
+        ]
+
+    pool: list[UUID] = []
+    user_repository = UserRepository(session)
+    for candidate_id in candidate_ids:
+        if candidate_id is None or candidate_id in pool:
+            continue
+        approver = await user_repository.get_by_id(candidate_id)
+        if approver is None or not approver.is_active:
+            continue
+        if approver.id == user.id:
+            continue
+        pool.append(approver.id)
+
+    if not pool:
+        raise NotFoundError("No eligible leave approver is configured for this user.")
+
+    return pool
 
 
 def _leave_type_label(leave_type: str) -> str:
@@ -173,9 +274,9 @@ async def create_leave_request(
         if leave_credit.remaining_credits <= 0:
             raise ConflictError("Insufficient leave credits for paid leave.")
 
-    first_approver_id, second_approver_id = await _get_approval_chain(
-        session, current_user
-    )
+    approval_pool = await _get_approval_pool(session, current_user)
+    first_approver_id = approval_pool[0]
+    second_approver_id = approval_pool[1] if len(approval_pool) > 1 else None
     leave_request = LeaveRequest(
         user_id=current_user.id,
         leave_date=payload.leave_date,
@@ -188,19 +289,27 @@ async def create_leave_request(
             LeaveRequestStatus.PENDING.value if second_approver_id is not None else None
         ),
         status=LeaveRequestStatus.PENDING.value,
+        approver_pool=[
+            LeaveRequestApprover(
+                approver_id=approver_id,
+                status=LeaveRequestStatus.PENDING.value,
+            )
+            for approver_id in approval_pool
+        ],
     )
     leave_request = await LeaveRequestRepository(session).create(leave_request)
 
     leave_date = leave_request.leave_date.isoformat()
     requester_name = _user_display_name(current_user)
     leave_type = _leave_type_label(leave_request.leave_type)
-    await _notify_user(
-        session,
-        recipient_id=leave_request.first_approver_id,
-        sender_id=current_user.id,
-        content=f"{requester_name} filed a {leave_type} leave request for {leave_date}.",
-        url=f"/leave/inbox?leave_id={leave_request.id}",
-    )
+    for approver_id in approval_pool:
+        await _notify_user(
+            session,
+            recipient_id=approver_id,
+            sender_id=current_user.id,
+            content=f"{requester_name} filed a {leave_type} leave request for {leave_date}.",
+            url=f"/leave/inbox?leave_id={leave_request.id}",
+        )
     return leave_request
 
 
@@ -244,41 +353,42 @@ async def review_leave_request(
     response = payload.response
     now = utc_now()
 
-    if leave_request.first_approver_id == current_user.id:
-        if leave_request.first_approver_status != LeaveRequestStatus.PENDING.value:
-            raise ConflictError("Leave request has already been reviewed by you.")
-        leave_request.first_approver_status = (
-            LeaveRequestStatus.APPROVED.value
-            if response == "APPROVE"
-            else LeaveRequestStatus.REJECTED.value
-        )
-        leave_request.first_approver_at = now
-        if response == "REJECT":
-            leave_request.status = LeaveRequestStatus.REJECTED.value
-        elif leave_request.second_approver_id is None:
-            leave_request.status = LeaveRequestStatus.APPROVED.value
-        else:
-            leave_request.status = LeaveRequestStatus.PENDING.value
-    elif leave_request.second_approver_id == current_user.id:
-        if leave_request.second_approver_status is not None and (
-            leave_request.second_approver_status != LeaveRequestStatus.PENDING.value
-        ):
-            raise ConflictError("Leave request has already been reviewed by you.")
-        if leave_request.first_approver_status != LeaveRequestStatus.APPROVED.value:
-            raise ConflictError("Leave request is not ready for your review.")
-        leave_request.second_approver_status = (
-            LeaveRequestStatus.APPROVED.value
-            if response == "APPROVE"
-            else LeaveRequestStatus.REJECTED.value
-        )
-        leave_request.second_approver_at = now
-        leave_request.status = (
-            LeaveRequestStatus.APPROVED.value
-            if response == "APPROVE"
-            else LeaveRequestStatus.REJECTED.value
-        )
-    else:
+    if leave_request.user_id == current_user.id:
+        raise PermissionDeniedError("You cannot review your own leave request.")
+
+    current_pool_assignment = next(
+        (
+            assignment
+            for assignment in leave_request.approver_pool
+            if assignment.approver_id == current_user.id
+        ),
+        None,
+    )
+    if current_pool_assignment is None:
         raise PermissionDeniedError("You do not have approval rights for this request.")
+    if current_pool_assignment.status != LeaveRequestStatus.PENDING.value:
+        raise ConflictError("Leave request has already been reviewed by you.")
+
+    final_status = (
+        LeaveRequestStatus.APPROVED.value
+        if response == "APPROVE"
+        else LeaveRequestStatus.REJECTED.value
+    )
+    current_pool_assignment.status = final_status
+    current_pool_assignment.acted_at = now
+    for assignment in leave_request.approver_pool:
+        if assignment is current_pool_assignment:
+            continue
+        if assignment.status == LeaveRequestStatus.PENDING.value:
+            assignment.status = final_status
+
+    if leave_request.first_approver_id is not None:
+        leave_request.first_approver_status = final_status
+        leave_request.first_approver_at = now
+    if leave_request.second_approver_id is not None:
+        leave_request.second_approver_status = final_status
+        leave_request.second_approver_at = now
+    leave_request.status = final_status
 
     leave_request = await repository.save(leave_request)
 
@@ -292,27 +402,11 @@ async def review_leave_request(
         leave_credit.used_credits += 1
         await LeaveCreditRepository(session).save(leave_credit)
 
-    reviewer_name = _user_display_name(current_user)
     leave_date = leave_request.leave_date.isoformat()
     leave_type = _leave_type_label(leave_request.leave_type)
 
     if response == "APPROVE":
-        if (
-            leave_request.first_approver_id == current_user.id
-            and leave_request.second_approver_id is not None
-            and leave_request.status == LeaveRequestStatus.PENDING.value
-        ):
-            await _notify_user(
-                session,
-                recipient_id=leave_request.second_approver_id,
-                sender_id=current_user.id,
-                content=(
-                    f"{reviewer_name} approved a {leave_type} leave request for {leave_date}. "
-                    "Your review is now required."
-                ),
-                url=f"/leave/inbox?leave_id={leave_request.id}",
-            )
-        elif leave_request.status == LeaveRequestStatus.APPROVED.value:
+        if leave_request.status == LeaveRequestStatus.APPROVED.value:
             await _notify_user(
                 session,
                 recipient_id=leave_request.user_id,
@@ -346,17 +440,34 @@ async def upsert_leave_approver(
         raise NotFoundError("Department not found.")
 
     user_repository = UserRepository(session)
-    for approver_id in [
-        payload.department_approver_id,
-        payload.director_approver_id,
-        payload.president_approver_id,
-        payload.hr_approver_id,
-    ]:
-        if approver_id is None:
-            continue
-        user = await user_repository.get_by_id(approver_id)
-        if user is None:
-            raise NotFoundError("Approver user not found.")
+    await _validate_leave_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.department_approver_id,
+        expected_role="DH",
+        approver_label="Department approver",
+        department_id=department_id,
+    )
+    await _validate_leave_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.director_approver_id,
+        expected_role="DIR",
+        approver_label="Director approver",
+        department_id=department_id,
+    )
+    await _validate_leave_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.president_approver_id,
+        expected_role="PRES",
+        approver_label="President approver",
+        department_id=department_id,
+    )
+    await _validate_leave_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.hr_approver_id,
+        expected_role="HR",
+        approver_label="HR approver",
+        department_id=department_id,
+    )
 
     repository = LeaveApproverRepository(session)
     leave_approver = await repository.get_by_department_id(department_id)

@@ -5,12 +5,12 @@ from datetime import date
 from typing import List
 from uuid import UUID
 
-from sqlalchemy import extract, func, or_, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest
+from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest, LeaveRequestApprover
 from app.models.user import User
 
 
@@ -112,6 +112,9 @@ class LeaveRequestRepository:
             selectinload(LeaveRequest.user).selectinload(User.department),
             selectinload(LeaveRequest.first_approver).selectinload(User.department),
             selectinload(LeaveRequest.second_approver).selectinload(User.department),
+            selectinload(LeaveRequest.approver_pool)
+            .selectinload(LeaveRequestApprover.approver)
+            .selectinload(User.department),
         )
 
     async def list(
@@ -131,11 +134,11 @@ class LeaveRequestRepository:
                 User.department_id == department_id
             )
         if approver_id is not None:
-            statement = statement.where(
-                or_(
-                    LeaveRequest.first_approver_id == approver_id,
-                    LeaveRequest.second_approver_id == approver_id,
-                )
+            statement = statement.join(
+                LeaveRequestApprover,
+                LeaveRequestApprover.leave_request_id == LeaveRequest.id,
+            ).where(
+                LeaveRequestApprover.approver_id == approver_id
             )
         if status is not None:
             statement = statement.where(LeaveRequest.status == status)
@@ -154,7 +157,7 @@ class LeaveRequestRepository:
             statement = statement.where(extract("month", LeaveRequest.leave_date) == month)
         statement = statement.order_by(
             LeaveRequest.leave_date.desc(), LeaveRequest.created_at.desc()
-        )
+        ).distinct()
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
@@ -180,12 +183,14 @@ class LeaveRequestRepository:
         self.session.add(leave_request)
         await self.session.commit()
         await self.session.refresh(leave_request)
-        return leave_request
+        hydrated = await self.get_by_id(leave_request.id)
+        return hydrated or leave_request
 
     async def save(self, leave_request: LeaveRequest) -> LeaveRequest:
         await self.session.commit()
         await self.session.refresh(leave_request)
-        return leave_request
+        hydrated = await self.get_by_id(leave_request.id)
+        return hydrated or leave_request
 
     async def delete(self, leave_request: LeaveRequest) -> None:
         await self.session.delete(leave_request)

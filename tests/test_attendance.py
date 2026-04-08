@@ -289,6 +289,7 @@ class FakeHolidayRepository:
 class FakeOvertimeRepository:
     overtime_requests: dict[int, OvertimeRequest] = {}
     next_id = 1
+    next_assignment_id = 1
 
     def __init__(self, session):
         self.session = session
@@ -304,7 +305,10 @@ class FakeOvertimeRepository:
         return [
             overtime
             for overtime in self.overtime_requests.values()
-            if overtime.approver_id == approver_id
+            if any(
+                assignment.approver_id == approver_id
+                for assignment in (overtime.approver_pool or [])
+            )
         ]
 
     async def list(
@@ -323,7 +327,14 @@ class FakeOvertimeRepository:
         if user_id is not None:
             results = [item for item in results if item.user_id == user_id]
         if approver_id is not None:
-            results = [item for item in results if item.approver_id == approver_id]
+            results = [
+                item
+                for item in results
+                if any(
+                    assignment.approver_id == approver_id
+                    for assignment in (item.approver_pool or [])
+                )
+            ]
         if year is not None:
             results = [item for item in results if item.date.year == year]
         if month is not None:
@@ -347,6 +358,10 @@ class FakeOvertimeRepository:
         self.next_id += 1
         overtime.created_at = overtime.created_at or utc_now()
         overtime.updated_at = overtime.updated_at or utc_now()
+        for assignment in overtime.approver_pool:
+            assignment.id = assignment.id or self.next_assignment_id
+            self.next_assignment_id += 1
+            assignment.overtime_request_id = overtime.id
         self.overtime_requests[overtime.id] = overtime
         return overtime
 
@@ -575,6 +590,7 @@ def setup_function():
     FakeHolidayRepository.next_id = 1
     FakeOvertimeRepository.overtime_requests = {}
     FakeOvertimeRepository.next_id = 1
+    FakeOvertimeRepository.next_assignment_id = 1
     FakeOvertimeApproverRepository.overtime_approvers = {}
     FakeOvertimeApproverRepository.next_id = 1
     FakeShiftSwapRepository.swaps = {}
@@ -1012,6 +1028,7 @@ def test_create_holiday_and_overtime_flow(monkeypatch):
     )
     assert overtime.id == 1
     assert overtime.approver_id == approver.id
+    assert [item.approver_id for item in overtime.approver_pool] == [approver.id]
 
     approved = anyio.run(
         _respond_overtime,
@@ -1020,6 +1037,7 @@ def test_create_holiday_and_overtime_flow(monkeypatch):
         OvertimeRequestRespondRequest(response="APPROVE"),
     )
     assert approved.status == OvertimeRequest.Status.APPROVED.value
+    assert len([item for item in approved.approver_pool if item.acted_at is not None]) == 1
 
 
 def test_overtime_approver_settings_can_be_managed(monkeypatch):

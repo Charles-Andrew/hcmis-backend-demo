@@ -17,3 +17,6 @@ class NotFoundError(HCMISException):
 class PermissionDeniedError(HCMISException):
     status_code = 403
 
+
+class BadRequestError(HCMISException):
+    status_code = 400

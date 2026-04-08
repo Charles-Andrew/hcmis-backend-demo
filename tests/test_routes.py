@@ -45,7 +45,7 @@ def test_core_routes_are_registered():
     assert "/payroll/positions" in paths
     assert "/payroll/payslips" in paths
     assert "/payroll/payslips/{payslip_id}/summary-comparison" in paths
-    assert "/payroll/thirteenth-month-pays" in paths
+    assert "/payroll/thirteenth-month" in paths
     assert "/performance/questionnaires" in paths
     assert "/performance/user-evaluations" in paths
     assert "/performance/feed" in paths

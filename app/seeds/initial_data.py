@@ -9,9 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 from app.models.app_log import AppLog
-from app.models.attendance import OvertimeApprover, OvertimeRequest
+from app.models.attendance import OvertimeApprover, OvertimeRequest, OvertimeRequestApprover
 from app.models.department import Department
-from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestStatus, LeaveType
+from app.models.leave import (
+    LeaveCredit,
+    LeaveRequest,
+    LeaveRequestApprover,
+    LeaveRequestStatus,
+    LeaveType,
+)
 from app.models.performance import Announcement, SharedResource
 from app.models.user import User
 
@@ -218,6 +224,12 @@ async def seed_initial_data(session: AsyncSession) -> None:
             first_approver_id=hr_user.id,
             first_approver_status=LeaveRequestStatus.PENDING.value,
             status=LeaveRequestStatus.PENDING.value,
+            approver_pool=[
+                LeaveRequestApprover(
+                    approver_id=hr_user.id,
+                    status=LeaveRequestStatus.PENDING.value,
+                )
+            ],
         )
     )
 
@@ -228,6 +240,12 @@ async def seed_initial_data(session: AsyncSession) -> None:
             date=date.today(),
             info="Seeded overtime request",
             status=OvertimeRequest.Status.PENDING.value,
+            approver_pool=[
+                OvertimeRequestApprover(
+                    approver_id=hr_user.id,
+                    status=OvertimeRequest.Status.PENDING.value,
+                )
+            ],
         )
     )
 

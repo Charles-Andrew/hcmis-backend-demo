@@ -17,6 +17,7 @@ from app.models.attendance import (
     Holiday,
     OvertimeApprover,
     OvertimeRequest,
+    OvertimeRequestApprover,
     ShiftTemplate,
     ShiftSwapRequest,
 )
@@ -86,12 +87,9 @@ def _ensure_aware(value: datetime) -> datetime:
     return value
 
 
-def _normalize_overtime_approval_chain(*approver_ids: UUID | None) -> list[UUID]:
-    chain: list[UUID] = []
-    for approver_id in approver_ids:
-        if approver_id is not None and approver_id not in chain:
-            chain.append(approver_id)
-    return chain
+def _normalize_role(role: str | None) -> str:
+    normalized = (role or "EMP").strip().upper()
+    return normalized or "EMP"
 
 
 async def _get_overtime_approver_settings(
@@ -108,37 +106,50 @@ async def _get_overtime_approver_settings(
     return approver_settings
 
 
-def _build_overtime_approval_chain(user: User, approver_settings: OvertimeApprover) -> list[UUID]:
-    role = (user.role or "EMP").upper()
+async def _build_overtime_approval_pool(session: AsyncSession, user: User) -> list[User]:
+    approver_settings = await _get_overtime_approver_settings(session, user)
+    role = _normalize_role(user.role)
     if role == "DH":
-        return _normalize_overtime_approval_chain(
+        candidate_ids = [
             approver_settings.director_approver_id,
-            approver_settings.hr_approver_id,
-        )
-    if role == "DIR":
-        return _normalize_overtime_approval_chain(
             approver_settings.president_approver_id,
             approver_settings.hr_approver_id,
-        )
-    if role == "PRES":
-        return _normalize_overtime_approval_chain(approver_settings.hr_approver_id)
-    return _normalize_overtime_approval_chain(
-        approver_settings.department_approver_id,
-        approver_settings.hr_approver_id,
-    )
+        ]
+    elif role == "DIR":
+        candidate_ids = [
+            approver_settings.president_approver_id,
+            approver_settings.hr_approver_id,
+        ]
+    elif role == "PRES":
+        candidate_ids = [approver_settings.hr_approver_id]
+    elif role == "HR":
+        candidate_ids = [
+            approver_settings.president_approver_id,
+            approver_settings.director_approver_id,
+            approver_settings.department_approver_id,
+        ]
+    else:
+        candidate_ids = [
+            approver_settings.department_approver_id,
+            approver_settings.director_approver_id,
+            approver_settings.president_approver_id,
+            approver_settings.hr_approver_id,
+        ]
 
-
-async def _resolve_overtime_approver(
-    session: AsyncSession, user: User
-) -> User | None:
-    approver_settings = await _get_overtime_approver_settings(session, user)
-    for approver_id in _build_overtime_approval_chain(user, approver_settings):
-        if approver_id == user.id:
+    pool: list[User] = []
+    seen_ids: set[UUID] = set()
+    user_repository = UserRepository(session)
+    for candidate_id in candidate_ids:
+        if candidate_id is None or candidate_id in seen_ids:
             continue
-        approver = await UserRepository(session).get_by_id(approver_id)
-        if approver is not None:
-            return approver
-    return None
+        approver = await user_repository.get_by_id(candidate_id)
+        if approver is None or not approver.is_active:
+            continue
+        if approver.id == user.id:
+            continue
+        seen_ids.add(approver.id)
+        pool.append(approver)
+    return pool
 
 
 async def _get_department_with_shifts(
@@ -715,10 +726,13 @@ async def delete_overtime_approver(session: AsyncSession, department_id: int) ->
 async def get_my_overtime_approver_assignment(
     session: AsyncSession, current_user: User
 ) -> OvertimeApproverAssignmentRead:
-    approver = await _resolve_overtime_approver(session, current_user)
+    approvers = await _build_overtime_approval_pool(session, current_user)
+    approver = approvers[0] if approvers else None
     return OvertimeApproverAssignmentRead(
         approver_id=approver.id if approver is not None else None,
         approver=UserRead.model_validate(approver) if approver is not None else None,
+        approver_ids=[item.id for item in approvers],
+        approvers=[UserRead.model_validate(item) for item in approvers],
     )
 
 
@@ -728,28 +742,37 @@ async def create_overtime_request(
     user = await UserRepository(session).get_by_id(payload.user_id)
     if user is None:
         raise NotFoundError("User not found.")
-    approver = await _resolve_overtime_approver(session, user)
-    if approver is None:
+    approvers = await _build_overtime_approval_pool(session, user)
+    if not approvers:
         raise NotFoundError("No overtime approver is configured for this user.")
+    first_approver = approvers[0]
     overtime = OvertimeRequest(
         user_id=payload.user_id,
-        approver_id=approver.id,
+        approver_id=first_approver.id,
         info=payload.info,
         date=payload.date,
         status=OvertimeRequest.Status.PENDING.value,
+        approver_pool=[
+            OvertimeRequestApprover(
+                approver_id=approver.id,
+                status=OvertimeRequest.Status.PENDING.value,
+            )
+            for approver in approvers
+        ],
     )
     overtime = await OvertimeRepository(session).create(overtime)
     requester_name = _display_user_name(user)
-    await create_notification_if_possible(
-        session,
-        recipient_id=overtime.approver_id,
-        sender_id=current_user.id,
-        content=f"{requester_name} filed an overtime request for {overtime.date.isoformat()}.",
-        url=(
-            f"/hr/overtime-management?scope=approvals&status=PEND"
-            f"&month={overtime.date.month}&year={overtime.date.year}"
-        ),
-    )
+    for approver in approvers:
+        await create_notification_if_possible(
+            session,
+            recipient_id=approver.id,
+            sender_id=current_user.id,
+            content=f"{requester_name} filed an overtime request for {overtime.date.isoformat()}.",
+            url=(
+                f"/hr/overtime-management?scope=approvals&status=PEND"
+                f"&month={overtime.date.month}&year={overtime.date.year}"
+            ),
+        )
     return overtime
 
 
@@ -763,15 +786,36 @@ async def respond_to_overtime_request(
     overtime = await repository.get_by_id(overtime_id)
     if overtime is None:
         raise NotFoundError("Overtime request not found.")
-    if overtime.approver_id != approver_id:
+    if overtime.user_id == approver_id:
+        raise PermissionDeniedError("You cannot review your own overtime request.")
+    current_pool_assignment = next(
+        (
+            assignment
+            for assignment in overtime.approver_pool
+            if assignment.approver_id == approver_id
+        ),
+        None,
+    )
+    if current_pool_assignment is None:
         raise PermissionDeniedError("You do not have permission to respond to this request.")
+    if current_pool_assignment.status != OvertimeRequest.Status.PENDING.value:
+        raise ConflictError("This overtime request has already been decided by you.")
     if overtime.status != OvertimeRequest.Status.PENDING.value:
         raise ConflictError("This overtime request has already been decided.")
-    overtime.status = (
+    final_status = (
         OvertimeRequest.Status.APPROVED.value
         if payload.response == "APPROVE"
         else OvertimeRequest.Status.REJECTED.value
     )
+    current_pool_assignment.status = final_status
+    current_pool_assignment.acted_at = datetime.now(UTC)
+    for assignment in overtime.approver_pool:
+        if assignment is current_pool_assignment:
+            continue
+        if assignment.status == OvertimeRequest.Status.PENDING.value:
+            assignment.status = final_status
+    overtime.approver_id = approver_id
+    overtime.status = final_status
     overtime = await repository.save(overtime)
     decision = "approved" if payload.response == "APPROVE" else "rejected"
     await create_notification_if_possible(

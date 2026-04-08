@@ -207,6 +207,19 @@ class OvertimeApproverRead(BaseModel):
 class OvertimeApproverAssignmentRead(BaseModel):
     approver_id: UUID | None = None
     approver: UserRead | None = None
+    approver_ids: list[UUID] = Field(default_factory=list)
+    approvers: list[UserRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OvertimeRequestApproverRead(BaseModel):
+    id: int
+    overtime_request_id: int
+    approver_id: UUID
+    status: str
+    acted_at: datetime | None = None
+    approver: UserRead | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -222,6 +235,7 @@ class OvertimeRequestRead(BaseModel):
     user_email: str | None = None
     user_department_name: str | None = None
     approver_name: str | None = None
+    approver_pool: list[OvertimeRequestApproverRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

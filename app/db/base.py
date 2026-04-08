@@ -9,11 +9,12 @@ from app.models.attendance import (
     EmployeeShiftAssignment,
     Holiday,
     OvertimeRequest,
+    OvertimeRequestApprover,
     ShiftTemplate,
     ShiftSwapRequest,
 )
 from app.models.department import Department
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest
+from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest, LeaveRequestApprover
 from app.models.performance import Evaluation, Questionnaire, UserEvaluation
 from app.models.payroll import (
     FixedCompensation,
@@ -23,8 +24,8 @@ from app.models.payroll import (
     Payslip,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
-    ThirteenthMonthPay,
-    ThirteenthMonthPayVariableDeduction,
+    ThirteenthMonthPayout,
+    ThirteenthMonthAdjustment,
 )
 from app.models.notification import Notification
 from app.models.user import User
@@ -42,6 +43,7 @@ __all__ = [
     "LeaveApprover",
     "LeaveCredit",
     "LeaveRequest",
+    "LeaveRequestApprover",
     "Evaluation",
     "FixedCompensation",
     "Position",
@@ -55,8 +57,9 @@ __all__ = [
     "Holiday",
     "Notification",
     "OvertimeRequest",
-    "ThirteenthMonthPay",
-    "ThirteenthMonthPayVariableDeduction",
+    "OvertimeRequestApprover",
+    "ThirteenthMonthPayout",
+    "ThirteenthMonthAdjustment",
     "ShiftTemplate",
     "ShiftSwapRequest",
     "User",

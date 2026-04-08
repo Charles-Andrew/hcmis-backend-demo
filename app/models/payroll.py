@@ -213,16 +213,30 @@ class PayslipVariableDeduction(Base):
     payslip = relationship("Payslip", back_populates="variable_deductions")
 
 
-class ThirteenthMonthPay(Base):
-    __tablename__ = "thirteenth_month_pays"
+class ThirteenthMonthPayout(Base):
+    __tablename__ = "thirteenth_month_payouts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "year", name="uq_thirteenth_month_payout_user_year"),
+        CheckConstraint(
+            "status IN ('DRAFT', 'RELEASED')",
+            name="ck_thirteenth_month_payouts_status",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
-    amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    month: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    released: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    release_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    year: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    gross_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    total_deductions: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    net_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0.00"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -230,25 +244,33 @@ class ThirteenthMonthPay(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    user = relationship("User", back_populates="thirteenth_month_pays")
-    variable_deductions = relationship(
-        "ThirteenthMonthPayVariableDeduction",
-        back_populates="thirteenth_month_pay",
+    user = relationship("User", back_populates="thirteenth_month_payouts")
+    adjustments = relationship(
+        "ThirteenthMonthAdjustment",
+        back_populates="payout",
         cascade="all, delete-orphan",
     )
 
 
-class ThirteenthMonthPayVariableDeduction(Base):
-    __tablename__ = "thirteenth_month_pay_variable_deductions"
+class ThirteenthMonthAdjustment(Base):
+    __tablename__ = "thirteenth_month_adjustments"
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('ADD', 'DEDUCT')",
+            name="ck_thirteenth_month_adjustments_type",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    thirteenth_month_pay_id: Mapped[int] = mapped_column(
-        ForeignKey("thirteenth_month_pays.id"), index=True
+    payout_id: Mapped[int] = mapped_column(
+        ForeignKey("thirteenth_month_payouts.id"), index=True, nullable=False
     )
-    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    type: Mapped[str] = mapped_column(String(10), nullable=False)
+    label: Mapped[str] = mapped_column(String(500), nullable=False)
     amount: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), default=Decimal("0.00"), nullable=False
     )
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -256,9 +278,7 @@ class ThirteenthMonthPayVariableDeduction(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    thirteenth_month_pay = relationship(
-        "ThirteenthMonthPay", back_populates="variable_deductions"
-    )
+    payout = relationship("ThirteenthMonthPayout", back_populates="adjustments")
 
 
 class PayrollPolicyVersion(Base):

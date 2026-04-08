@@ -26,8 +26,8 @@ from app.models.payroll import PayrollSetting  # noqa: F401
 from app.models.payroll import Payslip  # noqa: F401
 from app.models.payroll import PayslipVariableCompensation  # noqa: F401
 from app.models.payroll import PayslipVariableDeduction  # noqa: F401
-from app.models.payroll import ThirteenthMonthPay  # noqa: F401
-from app.models.payroll import ThirteenthMonthPayVariableDeduction  # noqa: F401
+from app.models.payroll import ThirteenthMonthAdjustment  # noqa: F401
+from app.models.payroll import ThirteenthMonthPayout  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.user import User  # noqa: F401
 

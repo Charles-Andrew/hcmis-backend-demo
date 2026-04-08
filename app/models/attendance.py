@@ -13,6 +13,7 @@ from sqlalchemy import (
     Table,
     Text,
     Time,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -248,6 +249,11 @@ class OvertimeRequest(Base):
     approver = relationship(
         "User", foreign_keys=[approver_id], back_populates="overtime_approvals"
     )
+    approver_pool = relationship(
+        "OvertimeRequestApprover",
+        back_populates="overtime_request",
+        cascade="all, delete-orphan",
+    )
 
     @staticmethod
     def _display_name(user) -> str | None:
@@ -273,6 +279,36 @@ class OvertimeRequest(Base):
     @property
     def approver_name(self) -> str | None:
         return self._display_name(self.approver)
+
+
+class OvertimeRequestApprover(Base):
+    __tablename__ = "overtime_request_approvers"
+    __table_args__ = (
+        UniqueConstraint(
+            "overtime_request_id",
+            "approver_id",
+            name="uq_overtime_request_approvers_overtime_request_id_approver_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    overtime_request_id: Mapped[int] = mapped_column(
+        ForeignKey("overtime_requests.id"), nullable=False, index=True
+    )
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(4), default=OvertimeRequest.Status.PENDING.value, nullable=False, index=True
+    )
+    acted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    overtime_request = relationship("OvertimeRequest", back_populates="approver_pool")
+    approver = relationship("User", foreign_keys=[approver_id])
 
 
 class ShiftSwapRequest(Base):

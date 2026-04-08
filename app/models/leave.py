@@ -2,7 +2,7 @@ from datetime import date, datetime
 from enum import Enum as PyEnum
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
@@ -115,6 +115,11 @@ class LeaveRequest(Base):
     user = relationship("User", back_populates="leave_requests", foreign_keys=[user_id])
     first_approver = relationship("User", foreign_keys=[first_approver_id])
     second_approver = relationship("User", foreign_keys=[second_approver_id])
+    approver_pool = relationship(
+        "LeaveRequestApprover",
+        back_populates="leave_request",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_ready_for_second_approver(self) -> bool:
@@ -123,3 +128,33 @@ class LeaveRequest(Base):
             and self.first_approver_status == LeaveRequestStatus.APPROVED.value
             and self.second_approver_status == LeaveRequestStatus.PENDING.value
         )
+
+
+class LeaveRequestApprover(Base):
+    __tablename__ = "leave_request_approvers"
+    __table_args__ = (
+        UniqueConstraint(
+            "leave_request_id",
+            "approver_id",
+            name="uq_leave_request_approvers_leave_request_id_approver_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    leave_request_id: Mapped[int] = mapped_column(
+        ForeignKey("leave_requests.id"), nullable=False, index=True
+    )
+    approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default=LeaveRequestStatus.PENDING.value, nullable=False, index=True
+    )
+    acted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    leave_request = relationship("LeaveRequest", back_populates="approver_pool")
+    approver = relationship("User", foreign_keys=[approver_id])

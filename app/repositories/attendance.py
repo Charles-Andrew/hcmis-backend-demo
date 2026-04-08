@@ -17,6 +17,7 @@ from app.models.attendance import (
     Holiday,
     OvertimeApprover,
     OvertimeRequest,
+    OvertimeRequestApprover,
     ShiftTemplate,
     ShiftSwapRequest,
 )
@@ -309,6 +310,9 @@ class OvertimeRepository:
         return select(OvertimeRequest).options(
             selectinload(OvertimeRequest.user).selectinload(User.department),
             selectinload(OvertimeRequest.approver),
+            selectinload(OvertimeRequest.approver_pool).selectinload(
+                OvertimeRequestApprover.approver
+            ),
         )
 
     async def list_for_user(self, user_id: UUID) -> list[OvertimeRequest]:
@@ -318,7 +322,15 @@ class OvertimeRepository:
         return list(result.scalars().all())
 
     async def list_for_approver(self, approver_id: UUID) -> list[OvertimeRequest]:
-        statement = self._base_statement().where(OvertimeRequest.approver_id == approver_id)
+        statement = (
+            self._base_statement()
+            .join(
+                OvertimeRequestApprover,
+                OvertimeRequestApprover.overtime_request_id == OvertimeRequest.id,
+            )
+            .where(OvertimeRequestApprover.approver_id == approver_id)
+            .distinct()
+        )
         statement = statement.order_by(OvertimeRequest.date.desc(), OvertimeRequest.id.desc())
         result = await self.session.execute(statement)
         return list(result.scalars().all())
@@ -339,7 +351,12 @@ class OvertimeRepository:
         if user_id is not None:
             statement = statement.where(OvertimeRequest.user_id == user_id)
         if approver_id is not None:
-            statement = statement.where(OvertimeRequest.approver_id == approver_id)
+            statement = statement.join(
+                OvertimeRequestApprover,
+                OvertimeRequestApprover.overtime_request_id == OvertimeRequest.id,
+            ).where(
+                OvertimeRequestApprover.approver_id == approver_id
+            )
         if year is not None:
             statement = statement.where(func.extract("year", OvertimeRequest.date) == year)
         if month is not None:
@@ -362,7 +379,7 @@ class OvertimeRepository:
             OvertimeRequest.status.asc(),
             OvertimeRequest.date.desc(),
             OvertimeRequest.id.desc(),
-        )
+        ).distinct()
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 

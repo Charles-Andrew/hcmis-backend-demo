@@ -102,7 +102,7 @@ class User(Base):
         back_populates="approver",
     )
     payslips = relationship("Payslip", back_populates="user")
-    thirteenth_month_pays = relationship("ThirteenthMonthPay", back_populates="user")
+    thirteenth_month_payouts = relationship("ThirteenthMonthPayout", back_populates="user")
     position_assignments = relationship(
         "UserPositionAssignment",
         back_populates="user",

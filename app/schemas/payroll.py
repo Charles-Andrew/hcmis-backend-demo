@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -438,47 +439,42 @@ class PayslipSummaryComparisonRead(BaseModel):
     differences: dict[str, Decimal] = Field(default_factory=dict)
 
 
-class ThirteenthMonthPayVariableDeductionRead(BaseModel):
+class ThirteenthMonthAdjustmentRead(BaseModel):
     id: int
-    thirteenth_month_pay_id: int
-    name: str
+    payout_id: int
+    type: Literal["ADD", "DEDUCT"]
+    label: str
     amount: Decimal
+    reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class ThirteenthMonthPayVariableDeductionUpsertRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=500)
+class ThirteenthMonthAdjustmentCreateRequest(BaseModel):
+    type: Literal["ADD", "DEDUCT"]
+    label: str = Field(min_length=1, max_length=500)
     amount: Decimal = Field(ge=0)
+    reason: str | None = Field(default=None, max_length=500)
 
 
-class ThirteenthMonthPayRead(BaseModel):
+class ThirteenthMonthGenerateRequest(BaseModel):
+    year: int = Field(ge=2000, le=2200)
+
+
+class ThirteenthMonthPayoutRead(BaseModel):
     id: int
     user_id: UUID
-    amount: Decimal | None = None
-    month: int | None = None
-    year: int | None = None
-    released: bool
-    release_date: datetime | None = None
+    year: int
+    gross_amount: Decimal
+    total_deductions: Decimal
+    net_amount: Decimal
+    status: Literal["DRAFT", "RELEASED"]
+    released_at: datetime | None = None
     user: UserRead | None = None
-    variable_deductions: list[ThirteenthMonthPayVariableDeductionRead] = Field(
-        default_factory=list
-    )
+    adjustments: list[ThirteenthMonthAdjustmentRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class ThirteenthMonthPayCreateRequest(BaseModel):
-    user_id: UUID
-    amount: Decimal = Field(ge=0)
-    month: int
-    year: int
-
-
-class ThirteenthMonthPayUpdateRequest(BaseModel):
-    amount: Decimal | None = Field(default=None, ge=0)
-    released: bool | None = None

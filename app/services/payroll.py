@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from collections import defaultdict
 from datetime import date
 import re
 from decimal import Decimal
@@ -18,8 +19,8 @@ from app.models.payroll import (
     Payslip,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
-    ThirteenthMonthPay,
-    ThirteenthMonthPayVariableDeduction,
+    ThirteenthMonthAdjustment,
+    ThirteenthMonthPayout,
 )
 from app.models.department import Department
 from app.models.user import User
@@ -32,8 +33,8 @@ from app.repositories.payroll import (
     PayslipRepository,
     PayslipVariableCompensationRepository,
     PayslipVariableDeductionRepository,
-    ThirteenthMonthPayRepository,
-    ThirteenthMonthPayVariableDeductionRepository,
+    ThirteenthMonthAdjustmentRepository,
+    ThirteenthMonthPayoutRepository,
 )
 from app.repositories.users import UserRepository
 from app.repositories.users import UserPositionAssignmentRepository
@@ -49,9 +50,8 @@ from app.schemas.payroll import (
     PayslipUpdateRequest,
     PayslipVariableCompensationUpsertRequest,
     PayslipVariableDeductionUpsertRequest,
-    ThirteenthMonthPayCreateRequest,
-    ThirteenthMonthPayUpdateRequest,
-    ThirteenthMonthPayVariableDeductionUpsertRequest,
+    ThirteenthMonthAdjustmentCreateRequest,
+    ThirteenthMonthGenerateRequest,
 )
 
 
@@ -704,111 +704,196 @@ async def remove_payslip_variable_deduction(
     await repository.delete(item)
 
 
-async def list_thirteenth_month_pays(
+def _round_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"))
+
+
+def _compute_payout_totals(
+    gross_amount: Decimal, adjustments: list[ThirteenthMonthAdjustment]
+) -> tuple[Decimal, Decimal]:
+    additions = sum(
+        (_to_decimal(item.amount) for item in adjustments if item.type == "ADD"),
+        Decimal("0.00"),
+    )
+    deductions = sum(
+        (_to_decimal(item.amount) for item in adjustments if item.type == "DEDUCT"),
+        Decimal("0.00"),
+    )
+    net = gross_amount + additions - deductions
+    return _round_money(deductions), _round_money(net)
+
+
+def _preferred_payslip(current: Payslip | None, candidate: Payslip) -> Payslip:
+    if current is None:
+        return candidate
+    if candidate.period == "2ND" and current.period != "2ND":
+        return candidate
+    if candidate.period == current.period and candidate.id > current.id:
+        return candidate
+    return current
+
+
+async def list_thirteenth_month_payouts(
     session: AsyncSession,
-    user_id: UUID | None = None,
-    month: int | None = None,
     year: int | None = None,
-    released: bool | None = None,
-) -> list[ThirteenthMonthPay]:
-    return await ThirteenthMonthPayRepository(session).list(
-        user_id=user_id, month=month, year=year, released=released
+    user_id: UUID | None = None,
+    status: str | None = None,
+) -> list[ThirteenthMonthPayout]:
+    return await ThirteenthMonthPayoutRepository(session).list(
+        user_id=user_id,
+        year=year,
+        status=status,
     )
 
 
-async def create_thirteenth_month_pay(
-    session: AsyncSession, payload: ThirteenthMonthPayCreateRequest
-) -> ThirteenthMonthPay:
-    user = await UserRepository(session).get_by_id(payload.user_id)
-    if user is None:
-        raise NotFoundError("User not found.")
-    repository = ThirteenthMonthPayRepository(session)
-    existing = await repository.get_by_identity(payload.user_id, payload.month, payload.year)
-    if existing is not None:
-        raise ConflictError("13th month pay record already exists.")
-    item = ThirteenthMonthPay(
-        user_id=payload.user_id,
-        amount=payload.amount,
-        month=payload.month,
-        year=payload.year,
+async def list_my_thirteenth_month_payouts(
+    session: AsyncSession, user_id: UUID, year: int | None = None
+) -> list[ThirteenthMonthPayout]:
+    return await ThirteenthMonthPayoutRepository(session).list(
+        user_id=user_id,
+        year=year,
+        status="RELEASED",
     )
-    return await repository.create(item)
 
 
-async def update_thirteenth_month_pay(
-    session: AsyncSession, item_id: int, payload: ThirteenthMonthPayUpdateRequest
-) -> ThirteenthMonthPay:
-    repository = ThirteenthMonthPayRepository(session)
-    item = await repository.get_by_id(item_id)
-    if item is None:
-        raise NotFoundError("13th month pay not found.")
-    was_released = item.released
-    if payload.amount is not None:
-        item.amount = payload.amount
-    if payload.released is not None:
-        item.released = payload.released
-        item.release_date = utc_now() if payload.released else None
-    item = await repository.save(item)
-    if not was_released and item.released:
-        await create_notification_if_possible(
-            session,
-            recipient_id=item.user_id,
-            content=f"Your 13th month pay for {item.month}/{item.year} is now available.",
-            url=f"/my-payslips?thirteenth_month_pay_id={item.id}",
+async def generate_thirteenth_month_payouts(
+    session: AsyncSession, payload: ThirteenthMonthGenerateRequest
+) -> list[ThirteenthMonthPayout]:
+    payout_repository = ThirteenthMonthPayoutRepository(session)
+    adjustment_repository = ThirteenthMonthAdjustmentRepository(session)
+    users = await UserRepository(session).list(include_superusers=False)
+    # 13th month uses earned basic salary for the calendar year, not release state.
+    payslips = await PayslipRepository(session).list(year=payload.year)
+
+    selected_monthly_payslips: dict[tuple[UUID, int], Payslip] = {}
+    for payslip in payslips:
+        if payslip.month is None:
+            continue
+        key = (payslip.user_id, payslip.month)
+        selected_monthly_payslips[key] = _preferred_payslip(
+            selected_monthly_payslips.get(key), payslip
         )
-    return item
 
+    annual_basic_salary_by_user: dict[UUID, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    for payslip in selected_monthly_payslips.values():
+        annual_basic_salary_by_user[payslip.user_id] += _to_decimal(payslip.salary)
 
-async def toggle_thirteenth_month_pay_release(
-    session: AsyncSession, item_id: int
-) -> ThirteenthMonthPay:
-    repository = ThirteenthMonthPayRepository(session)
-    item = await repository.get_by_id(item_id)
-    if item is None:
-        raise NotFoundError("13th month pay not found.")
-    item.released = not item.released
-    item.release_date = utc_now() if item.released else None
-    item = await repository.save(item)
-    if item.released:
-        await create_notification_if_possible(
-            session,
-            recipient_id=item.user_id,
-            content=f"Your 13th month pay for {item.month}/{item.year} is now available.",
-            url=f"/my-payslips?thirteenth_month_pay_id={item.id}",
+    generated_ids: list[int] = []
+    for user in users:
+        gross_amount = _round_money(annual_basic_salary_by_user[user.id] / Decimal("12"))
+        payout = await payout_repository.get_by_user_year(user.id, payload.year)
+
+        if payout is None:
+            payout = await payout_repository.create(
+                ThirteenthMonthPayout(
+                    user_id=user.id,
+                    year=payload.year,
+                    gross_amount=gross_amount,
+                    total_deductions=Decimal("0.00"),
+                    net_amount=gross_amount,
+                    status="DRAFT",
+                )
+            )
+            generated_ids.append(payout.id)
+            continue
+
+        if payout.status == "RELEASED":
+            generated_ids.append(payout.id)
+            continue
+
+        adjustments = await adjustment_repository.list_by_payout_id(payout.id)
+        payout.gross_amount = gross_amount
+        payout.total_deductions, payout.net_amount = _compute_payout_totals(
+            gross_amount, adjustments
         )
-    return item
+        saved = await payout_repository.save(payout)
+        generated_ids.append(saved.id)
+
+    payouts: list[ThirteenthMonthPayout] = []
+    for payout_id in generated_ids:
+        payout = await payout_repository.get_by_id(payout_id)
+        if payout is not None:
+            payouts.append(payout)
+    return payouts
 
 
-async def delete_thirteenth_month_pay(session: AsyncSession, item_id: int) -> None:
-    repository = ThirteenthMonthPayRepository(session)
-    item = await repository.get_by_id(item_id)
-    if item is None:
-        raise NotFoundError("13th month pay not found.")
-    await repository.delete(item)
-
-
-async def add_thirteenth_month_pay_variable_deduction(
+async def add_thirteenth_month_adjustment(
     session: AsyncSession,
-    item_id: int,
-    payload: ThirteenthMonthPayVariableDeductionUpsertRequest,
-) -> ThirteenthMonthPayVariableDeduction:
-    repository = ThirteenthMonthPayVariableDeductionRepository(session)
-    pay = await ThirteenthMonthPayRepository(session).get_by_id(item_id)
-    if pay is None:
-        raise NotFoundError("13th month pay not found.")
-    item = ThirteenthMonthPayVariableDeduction(
-        thirteenth_month_pay_id=item_id,
-        name=payload.name.strip(),
+    payout_id: int,
+    payload: ThirteenthMonthAdjustmentCreateRequest,
+) -> ThirteenthMonthPayout:
+    payout_repository = ThirteenthMonthPayoutRepository(session)
+    adjustment_repository = ThirteenthMonthAdjustmentRepository(session)
+
+    payout = await payout_repository.get_by_id(payout_id)
+    if payout is None:
+        raise NotFoundError("13th month payout not found.")
+    if payout.status == "RELEASED":
+        raise ConflictError("Released 13th month payout cannot be modified.")
+
+    item = ThirteenthMonthAdjustment(
+        payout_id=payout_id,
+        type=payload.type,
+        label=payload.label.strip(),
         amount=payload.amount,
+        reason=_normalize_optional_text(payload.reason),
     )
-    return await repository.create(item)
+    await adjustment_repository.create(item)
+
+    adjustments = await adjustment_repository.list_by_payout_id(payout_id)
+    payout.total_deductions, payout.net_amount = _compute_payout_totals(
+        _to_decimal(payout.gross_amount), adjustments
+    )
+    saved = await payout_repository.save(payout)
+    loaded = await payout_repository.get_by_id(saved.id)
+    return loaded if loaded is not None else saved
 
 
-async def remove_thirteenth_month_pay_variable_deduction(
-    session: AsyncSession, item_id: int
-) -> None:
-    repository = ThirteenthMonthPayVariableDeductionRepository(session)
-    item = await repository.get_by_id(item_id)
+async def remove_thirteenth_month_adjustment(
+    session: AsyncSession, adjustment_id: int
+) -> ThirteenthMonthPayout:
+    payout_repository = ThirteenthMonthPayoutRepository(session)
+    adjustment_repository = ThirteenthMonthAdjustmentRepository(session)
+
+    item = await adjustment_repository.get_by_id(adjustment_id)
     if item is None:
-        raise NotFoundError("13th month pay variable deduction not found.")
-    await repository.delete(item)
+        raise NotFoundError("13th month adjustment not found.")
+
+    payout = await payout_repository.get_by_id(item.payout_id)
+    if payout is None:
+        raise NotFoundError("13th month payout not found.")
+    if payout.status == "RELEASED":
+        raise ConflictError("Released 13th month payout cannot be modified.")
+
+    await adjustment_repository.delete(item)
+    adjustments = await adjustment_repository.list_by_payout_id(payout.id)
+    payout.total_deductions, payout.net_amount = _compute_payout_totals(
+        _to_decimal(payout.gross_amount), adjustments
+    )
+    saved = await payout_repository.save(payout)
+    loaded = await payout_repository.get_by_id(saved.id)
+    return loaded if loaded is not None else saved
+
+
+async def release_thirteenth_month_payout(
+    session: AsyncSession, payout_id: int
+) -> ThirteenthMonthPayout:
+    payout_repository = ThirteenthMonthPayoutRepository(session)
+
+    payout = await payout_repository.get_by_id(payout_id)
+    if payout is None:
+        raise NotFoundError("13th month payout not found.")
+    if payout.status == "RELEASED":
+        return payout
+
+    payout.status = "RELEASED"
+    payout.released_at = utc_now()
+    payout = await payout_repository.save(payout)
+
+    await create_notification_if_possible(
+        session,
+        recipient_id=payout.user_id,
+        content=f"Your 13th month payout for {payout.year} is now available.",
+        url=f"/my-thirteenth-month?payout_id={payout.id}",
+    )
+    return payout

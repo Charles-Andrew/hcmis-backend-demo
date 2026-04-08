@@ -66,6 +66,17 @@ class LeaveRequestReviewRequest(BaseModel):
     response: Literal["APPROVE", "REJECT"]
 
 
+class LeaveRequestApproverRead(BaseModel):
+    id: int
+    leave_request_id: int
+    approver_id: UUID
+    status: str
+    acted_at: datetime | None = None
+    approver: UserRead | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LeaveRequestRead(BaseModel):
     id: int
     user_id: UUID
@@ -82,6 +93,7 @@ class LeaveRequestRead(BaseModel):
     user: UserRead | None = None
     first_approver: UserRead | None = None
     second_approver: UserRead | None = None
+    approver_pool: list[LeaveRequestApproverRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

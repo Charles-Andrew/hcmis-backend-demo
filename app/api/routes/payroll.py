@@ -13,8 +13,7 @@ from app.models.payroll import (
     Payslip,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
-    ThirteenthMonthPay,
-    ThirteenthMonthPayVariableDeduction,
+    ThirteenthMonthPayout,
 )
 from app.models.user import User
 from app.schemas.payroll import (
@@ -45,11 +44,9 @@ from app.schemas.payroll import (
     PayslipVariableCompensationUpsertRequest,
     PayslipVariableDeductionRead,
     PayslipVariableDeductionUpsertRequest,
-    ThirteenthMonthPayCreateRequest,
-    ThirteenthMonthPayRead,
-    ThirteenthMonthPayUpdateRequest,
-    ThirteenthMonthPayVariableDeductionRead,
-    ThirteenthMonthPayVariableDeductionUpsertRequest,
+    ThirteenthMonthAdjustmentCreateRequest,
+    ThirteenthMonthGenerateRequest,
+    ThirteenthMonthPayoutRead,
 )
 from app.services.payroll_engine import compare_payslip_summary, get_payslip_summary_v2
 from app.services.payroll_workflow import (
@@ -67,34 +64,33 @@ from app.services.payroll_workflow import (
 from app.services.payroll import (
     add_payslip_variable_compensation,
     add_payslip_variable_deduction,
-    add_thirteenth_month_pay_variable_deduction,
+    add_thirteenth_month_adjustment,
     create_fixed_compensation,
     create_position,
     create_mp2_enrollment,
-    create_thirteenth_month_pay,
     delete_fixed_compensation,
     delete_position,
-    delete_thirteenth_month_pay,
     get_or_create_payslip,
     get_payslips,
     get_settings,
+    generate_thirteenth_month_payouts,
     list_fixed_compensations,
     list_mp2_enrollments,
     list_positions,
-    list_thirteenth_month_pays,
+    list_my_thirteenth_month_payouts,
+    list_thirteenth_month_payouts,
     end_mp2_enrollment,
     remove_payslip_variable_compensation,
     remove_payslip_variable_deduction,
-    remove_thirteenth_month_pay_variable_deduction,
+    remove_thirteenth_month_adjustment,
+    release_thirteenth_month_payout,
     toggle_payslip_release,
-    toggle_thirteenth_month_pay_release,
     update_fixed_compensation,
     update_fixed_compensation_users,
     update_mp2_enrollment,
     update_position,
     update_payslip,
     update_settings,
-    update_thirteenth_month_pay,
 )
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -493,85 +489,73 @@ async def remove_payslip_variable_deduction_route(
     await remove_payslip_variable_deduction(session, item_id)
 
 
-@router.get("/thirteenth-month-pays", response_model=list[ThirteenthMonthPayRead])
-async def read_thirteenth_month_pays(
-    user_id: UUID | None = Query(default=None),
-    month: int | None = Query(default=None),
+@router.get("/thirteenth-month", response_model=list[ThirteenthMonthPayoutRead])
+async def read_thirteenth_month_payouts(
     year: int | None = Query(default=None),
-    released: bool | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[ThirteenthMonthPay]:
-    return await list_thirteenth_month_pays(
-        session, user_id=user_id, month=month, year=year, released=released
+) -> list[ThirteenthMonthPayout]:
+    return await list_thirteenth_month_payouts(
+        session,
+        year=year,
+        user_id=user_id,
+        status=status_filter,
     )
 
 
+@router.get("/thirteenth-month/me", response_model=list[ThirteenthMonthPayoutRead])
+async def read_my_thirteenth_month_payouts(
+    year: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ThirteenthMonthPayout]:
+    return await list_my_thirteenth_month_payouts(session, user_id=current_user.id, year=year)
+
+
+@router.post("/thirteenth-month/generate", response_model=list[ThirteenthMonthPayoutRead])
+async def post_generate_thirteenth_month(
+    payload: ThirteenthMonthGenerateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[ThirteenthMonthPayout]:
+    return await generate_thirteenth_month_payouts(session, payload)
+
+
 @router.post(
-    "/thirteenth-month-pays",
-    response_model=ThirteenthMonthPayRead,
+    "/thirteenth-month/{payout_id}/adjustments",
+    response_model=ThirteenthMonthPayoutRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def post_thirteenth_month_pay(
-    payload: ThirteenthMonthPayCreateRequest,
+async def post_thirteenth_month_adjustment(
+    payout_id: int,
+    payload: ThirteenthMonthAdjustmentCreateRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> ThirteenthMonthPay:
-    return await create_thirteenth_month_pay(session, payload)
-
-
-@router.patch("/thirteenth-month-pays/{item_id}", response_model=ThirteenthMonthPayRead)
-async def patch_thirteenth_month_pay(
-    item_id: int,
-    payload: ThirteenthMonthPayUpdateRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> ThirteenthMonthPay:
-    return await update_thirteenth_month_pay(session, item_id, payload)
-
-
-@router.post(
-    "/thirteenth-month-pays/{item_id}/release-toggle",
-    response_model=ThirteenthMonthPayRead,
-)
-async def toggle_thirteenth_month_pay(
-    item_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> ThirteenthMonthPay:
-    return await toggle_thirteenth_month_pay_release(session, item_id)
-
-
-@router.delete("/thirteenth-month-pays/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_thirteenth_month_pay_route(
-    item_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> None:
-    await delete_thirteenth_month_pay(session, item_id)
-
-
-@router.post(
-    "/thirteenth-month-pays/{item_id}/variable-deductions",
-    response_model=ThirteenthMonthPayVariableDeductionRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def post_thirteenth_month_pay_variable_deduction(
-    item_id: int,
-    payload: ThirteenthMonthPayVariableDeductionUpsertRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> ThirteenthMonthPayVariableDeduction:
-    return await add_thirteenth_month_pay_variable_deduction(session, item_id, payload)
+) -> ThirteenthMonthPayout:
+    return await add_thirteenth_month_adjustment(session, payout_id, payload)
 
 
 @router.delete(
-    "/thirteenth-month-pays/variable-deductions/{item_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    "/thirteenth-month/adjustments/{adjustment_id}",
+    response_model=ThirteenthMonthPayoutRead,
 )
-async def remove_thirteenth_month_pay_variable_deduction_route(
-    item_id: int,
+async def delete_thirteenth_month_adjustment(
+    adjustment_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> None:
-    await remove_thirteenth_month_pay_variable_deduction(session, item_id)
+) -> ThirteenthMonthPayout:
+    return await remove_thirteenth_month_adjustment(session, adjustment_id)
+
+
+@router.post(
+    "/thirteenth-month/{payout_id}/release",
+    response_model=ThirteenthMonthPayoutRead,
+)
+async def post_release_thirteenth_month(
+    payout_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> ThirteenthMonthPayout:
+    return await release_thirteenth_month_payout(session, payout_id)
