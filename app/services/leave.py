@@ -13,6 +13,8 @@ from app.models.leave import (
     LeaveRequestStatus,
     LeaveType,
 )
+from app.models.attendance import OvertimeRequest
+from app.repositories.attendance import OvertimeRepository
 from app.models.user import User
 from app.repositories.departments import DepartmentRepository
 from app.repositories.leave import (
@@ -269,6 +271,29 @@ async def get_leave_request(session: AsyncSession, leave_id: int) -> LeaveReques
 async def create_leave_request(
     session: AsyncSession, current_user: User, payload: LeaveRequestCreateRequest
 ) -> LeaveRequest:
+    active_statuses = (
+        LeaveRequestStatus.PENDING.value,
+        LeaveRequestStatus.APPROVED.value,
+    )
+    existing_leave = await LeaveRequestRepository(session).get_active_for_user_date(
+        current_user.id,
+        payload.leave_date,
+        statuses=active_statuses,
+    )
+    if existing_leave is not None:
+        raise ConflictError("An active leave request already exists for this date.")
+
+    existing_overtime = await OvertimeRepository(session).get_active_for_user_date(
+        current_user.id,
+        payload.leave_date,
+        statuses=(
+            OvertimeRequest.Status.PENDING.value,
+            OvertimeRequest.Status.APPROVED.value,
+        ),
+    )
+    if existing_overtime is not None:
+        raise ConflictError("An active overtime request already exists for this date.")
+
     if payload.leave_type == LeaveType.PAID.value:
         leave_credit = await _ensure_leave_credit(session, current_user.id)
         if leave_credit.remaining_credits <= 0:
@@ -313,27 +338,33 @@ async def create_leave_request(
     return leave_request
 
 
-async def delete_leave_request(
+async def cancel_leave_request(
     session: AsyncSession, leave_id: int, current_user: User
-) -> None:
+) -> LeaveRequest:
     repository = LeaveRequestRepository(session)
     leave_request = await repository.get_by_id(leave_id)
     if leave_request is None:
         raise NotFoundError("Leave request not found.")
 
     if leave_request.user_id != current_user.id and not is_staff_user(current_user):
-        raise PermissionDeniedError("You are not allowed to delete this leave request.")
+        raise PermissionDeniedError("You are not allowed to cancel this leave request.")
+    if leave_request.status != LeaveRequestStatus.PENDING.value:
+        raise ConflictError("Only pending leave requests can be cancelled.")
 
-    if (
-        leave_request.status == LeaveRequestStatus.APPROVED.value
-        and leave_request.leave_type == LeaveType.PAID.value
-    ):
-        leave_credit = await _ensure_leave_credit(session, leave_request.user_id)
-        if leave_credit.used_credits > 0:
-            leave_credit.used_credits -= 1
-            await LeaveCreditRepository(session).save(leave_credit)
+    now = utc_now()
+    leave_request.status = LeaveRequestStatus.CANCELLED.value
+    if leave_request.first_approver_status == LeaveRequestStatus.PENDING.value:
+        leave_request.first_approver_status = LeaveRequestStatus.CANCELLED.value
+        leave_request.first_approver_at = now
+    if leave_request.second_approver_status == LeaveRequestStatus.PENDING.value:
+        leave_request.second_approver_status = LeaveRequestStatus.CANCELLED.value
+        leave_request.second_approver_at = now
+    for assignment in leave_request.approver_pool:
+        if assignment.status == LeaveRequestStatus.PENDING.value:
+            assignment.status = LeaveRequestStatus.CANCELLED.value
+            assignment.acted_at = now
 
-    await repository.delete(leave_request)
+    return await repository.save(leave_request)
 
 
 async def review_leave_request(

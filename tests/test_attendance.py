@@ -1,11 +1,12 @@
 import anyio
+import pytest
 from datetime import UTC, date, datetime, time
 from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.time import utc_now
 from app.models.attendance import (
     AttendanceRecord,
@@ -18,6 +19,7 @@ from app.models.attendance import (
     ShiftSwapRequest,
 )
 from app.models.department import Department
+from app.models.leave import LeaveRequest, LeaveRequestStatus
 from app.models.user import User
 from app.schemas.attendance import (
     AttendanceRecordCreateRequest,
@@ -269,6 +271,23 @@ class FakeHolidayRepository:
     async def get_by_id(self, holiday_id: int):
         return self.holidays.get(holiday_id)
 
+    async def find_conflict(
+        self,
+        *,
+        day: int,
+        month: int,
+        year: int | None,
+        exclude_id: int | None = None,
+    ):
+        for holiday in self.holidays.values():
+            if exclude_id is not None and holiday.id == exclude_id:
+                continue
+            if holiday.day != day or holiday.month != month:
+                continue
+            if holiday.year is None or year is None or holiday.year == year:
+                return holiday
+        return None
+
     async def create(self, holiday: Holiday):
         holiday.id = self.next_id
         self.next_id += 1
@@ -284,6 +303,43 @@ class FakeHolidayRepository:
 
     async def delete(self, holiday: Holiday):
         self.holidays.pop(holiday.id, None)
+
+
+class FakeLeaveRequestRepository:
+    leave_requests: dict[int, LeaveRequest] = {}
+
+    def __init__(self, session):
+        self.session = session
+
+    async def list(
+        self,
+        user_id: UUID | None = None,
+        department_id: int | None = None,
+        approver_id: UUID | None = None,
+        status: str | None = None,
+        year: int | None = None,
+        month: int | None = None,
+    ):
+        requests = list(self.leave_requests.values())
+        if user_id is not None:
+            requests = [item for item in requests if item.user_id == user_id]
+        if status is not None:
+            requests = [item for item in requests if item.status == status]
+        if year is not None:
+            requests = [item for item in requests if item.leave_date.year == year]
+        if month is not None:
+            requests = [item for item in requests if item.leave_date.month == month]
+        return sorted(requests, key=lambda item: (item.leave_date, item.created_at), reverse=True)
+
+    async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
+        for request in self.leave_requests.values():
+            if (
+                request.user_id == user_id
+                and request.leave_date == selected_date
+                and request.status in statuses
+            ):
+                return request
+        return None
 
 
 class FakeOvertimeRepository:
@@ -352,6 +408,16 @@ class FakeOvertimeRepository:
 
     async def get_by_id(self, overtime_id: int):
         return self.overtime_requests.get(overtime_id)
+
+    async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
+        for overtime in self.overtime_requests.values():
+            if (
+                overtime.user_id == user_id
+                and overtime.date == selected_date
+                and overtime.status in statuses
+            ):
+                return overtime
+        return None
 
     async def create(self, overtime: OvertimeRequest):
         overtime.id = self.next_id
@@ -588,6 +654,7 @@ def setup_function():
     FakeDepartmentRosterDayRepository.next_id = 1
     FakeHolidayRepository.holidays = {}
     FakeHolidayRepository.next_id = 1
+    FakeLeaveRequestRepository.leave_requests = {}
     FakeOvertimeRepository.overtime_requests = {}
     FakeOvertimeRepository.next_id = 1
     FakeOvertimeRepository.next_assignment_id = 1
@@ -1013,10 +1080,13 @@ def test_create_holiday_and_overtime_flow(monkeypatch):
         attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
     )
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
 
     holiday = anyio.run(
         _create_holiday,
-        HolidayCreateRequest(name="Holiday", day=25, month=12, year=2026, is_regular=False),
+        HolidayCreateRequest(name="Holiday", day=25, month=12, year=2026),
     )
     assert holiday.id == 1
 
@@ -1038,6 +1108,289 @@ def test_create_holiday_and_overtime_flow(monkeypatch):
     )
     assert approved.status == OvertimeRequest.Status.APPROVED.value
     assert len([item for item in approved.approver_pool if item.acted_at is not None]) == 1
+
+
+def test_cancel_overtime_request_marks_pending_request_cancelled(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(UUID(int=1), department=department)
+    approver = _make_user(UUID(int=2), department=department, role="DH")
+    FakeUserRepository.users = {user.id: user, approver.id: approver}
+    FakeOvertimeApproverRepository.overtime_approvers = {
+        department.id: OvertimeApprover(
+            id=1,
+            department_id=department.id,
+            department_approver_id=approver.id,
+            director_approver_id=None,
+            president_approver_id=None,
+            hr_approver_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+    monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    overtime = anyio.run(
+        _create_overtime,
+        OvertimeRequestCreateRequest(
+            user_id=user.id,
+            info="Support",
+            date=date(2026, 3, 24),
+        ),
+    )
+
+    cancelled = anyio.run(
+        attendance_service.cancel_overtime_request,
+        cast(AsyncSession, object()),
+        overtime.id,
+        user,
+    )
+    assert cancelled.status == OvertimeRequest.Status.CANCELLED.value
+    assert all(
+        assignment.status == OvertimeRequest.Status.CANCELLED.value
+        for assignment in cancelled.approver_pool
+    )
+    assert FakeOvertimeRepository.overtime_requests[overtime.id].status == (
+        OvertimeRequest.Status.CANCELLED.value
+    )
+
+
+def test_cancel_overtime_request_rejects_other_user(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(UUID(int=1), department=department)
+    approver = _make_user(UUID(int=2), department=department, role="DH")
+    other_user = _make_user(UUID(int=3), department=department)
+    FakeUserRepository.users = {
+        user.id: user,
+        approver.id: approver,
+        other_user.id: other_user,
+    }
+    FakeOvertimeApproverRepository.overtime_approvers = {
+        department.id: OvertimeApprover(
+            id=1,
+            department_id=department.id,
+            department_approver_id=approver.id,
+            director_approver_id=None,
+            president_approver_id=None,
+            hr_approver_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+    monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    overtime = anyio.run(
+        _create_overtime,
+        OvertimeRequestCreateRequest(
+            user_id=user.id,
+            info="Support",
+            date=date(2026, 3, 24),
+        ),
+    )
+
+    try:
+        anyio.run(
+            attendance_service.cancel_overtime_request,
+            cast(AsyncSession, object()),
+            overtime.id,
+            other_user,
+        )
+    except attendance_service.PermissionDeniedError as exc:
+        assert exc.detail == "You are not allowed to cancel this overtime request."
+    else:
+        raise AssertionError("Expected PermissionDeniedError")
+
+
+def test_create_overtime_request_rejects_same_day_active_overtime(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(UUID(int=1), department=department)
+    approver = _make_user(UUID(int=2), department=department, role="DH")
+    FakeUserRepository.users = {user.id: user, approver.id: approver}
+    FakeOvertimeApproverRepository.overtime_approvers = {
+        department.id: OvertimeApprover(
+            id=1,
+            department_id=department.id,
+            department_approver_id=approver.id,
+            director_approver_id=None,
+            president_approver_id=None,
+            hr_approver_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+    FakeLeaveRequestRepository.leave_requests = {}
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+    monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    anyio.run(
+        _create_overtime,
+        OvertimeRequestCreateRequest(user_id=user.id, info="First", date=date(2026, 3, 24)),
+    )
+
+    with pytest.raises(attendance_service.ConflictError, match="active overtime request already exists"):
+        anyio.run(
+            _create_overtime,
+            OvertimeRequestCreateRequest(user_id=user.id, info="Second", date=date(2026, 3, 24)),
+        )
+
+
+def test_create_overtime_request_rejects_same_day_active_leave(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(UUID(int=1), department=department)
+    approver = _make_user(UUID(int=2), department=department, role="DH")
+    FakeUserRepository.users = {user.id: user, approver.id: approver}
+    FakeOvertimeApproverRepository.overtime_approvers = {
+        department.id: OvertimeApprover(
+            id=1,
+            department_id=department.id,
+            department_approver_id=approver.id,
+            director_approver_id=None,
+            president_approver_id=None,
+            hr_approver_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+    FakeLeaveRequestRepository.leave_requests = {
+        1: LeaveRequest(
+            id=1,
+            user_id=user.id,
+            leave_date=date(2026, 3, 24),
+            leave_type="PA",
+            info="Leave",
+            first_approver_id=approver.id,
+            first_approver_status=LeaveRequestStatus.PENDING.value,
+            first_approver_at=None,
+            second_approver_id=None,
+            second_approver_status=None,
+            second_approver_at=None,
+            status=LeaveRequestStatus.PENDING.value,
+            approver_pool=[],
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+    monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+
+    with pytest.raises(attendance_service.ConflictError, match="active leave request already exists"):
+        anyio.run(
+            _create_overtime,
+            OvertimeRequestCreateRequest(user_id=user.id, info="OT", date=date(2026, 3, 24)),
+        )
+
+
+def test_create_holiday_rejects_duplicate_specific_date(monkeypatch):
+    FakeHolidayRepository.holidays = {
+        1: Holiday(
+            id=1,
+            name="Founding Day",
+            day=12,
+            month=6,
+            year=2026,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+    monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
+
+    try:
+        anyio.run(
+            _create_holiday,
+            HolidayCreateRequest(name="Duplicate", day=12, month=6, year=2026),
+        )
+    except ConflictError as exc:
+        assert exc.detail == "A holiday already exists for this date."
+    else:
+        raise AssertionError("Expected ConflictError for duplicate holiday date.")
+
+
+def test_create_holiday_rejects_overlap_with_recurring_holiday(monkeypatch):
+    FakeHolidayRepository.holidays = {
+        1: Holiday(
+            id=1,
+            name="Christmas Day",
+            day=25,
+            month=12,
+            year=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+    monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
+
+    try:
+        anyio.run(
+            _create_holiday,
+            HolidayCreateRequest(
+                name="Christmas 2026",
+                day=25,
+                month=12,
+                year=2026,
+            ),
+        )
+    except ConflictError as exc:
+        assert exc.detail == "A recurring holiday already exists for this date."
+    else:
+        raise AssertionError("Expected ConflictError for recurring holiday overlap.")
+
+
+def test_update_holiday_rejects_conflicting_date(monkeypatch):
+    FakeHolidayRepository.holidays = {
+        1: Holiday(
+            id=1,
+            name="New Year's Day",
+            day=1,
+            month=1,
+            year=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        ),
+        2: Holiday(
+            id=2,
+            name="Local Holiday",
+            day=2,
+            month=1,
+            year=2026,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        ),
+    }
+    monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
+
+    try:
+        anyio.run(
+            attendance_service.update_holiday,
+            cast(AsyncSession, object()),
+            2,
+            attendance_service.HolidayUpdateRequest(day=1, month=1, year=2026),
+        )
+    except ConflictError as exc:
+        assert exc.detail == "A recurring holiday already exists for this date."
+    else:
+        raise AssertionError("Expected ConflictError when moving holiday onto recurring date.")
 
 
 def test_overtime_approver_settings_can_be_managed(monkeypatch):
@@ -1072,6 +1425,117 @@ def test_overtime_approver_settings_can_be_managed(monkeypatch):
     assert approver.hr_approver_id == hr_user.id
 
 
+def test_overtime_approver_upsert_rejects_invalid_role(monkeypatch):
+    department = _make_department(1)
+    employee = _make_user(UUID(int=1), department=department, role="EMP")
+    director = _make_user(UUID(int=2), department=department, role="DIR")
+    president = _make_user(UUID(int=3), department=department, role="PRES")
+    hr_user = _make_user(UUID(int=4), department=department, role="HR")
+    FakeDepartmentRepository.departments = {department.id: department}
+    FakeUserRepository.users = {
+        employee.id: employee,
+        director.id: director,
+        president.id: president,
+        hr_user.id: hr_user,
+    }
+
+    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+
+    try:
+        anyio.run(
+            attendance_service.upsert_overtime_approver,
+            cast(AsyncSession, object()),
+            department.id,
+            OvertimeApproverUpsertRequest(
+                department_approver_id=employee.id,
+                director_approver_id=director.id,
+                president_approver_id=president.id,
+                hr_approver_id=hr_user.id,
+            ),
+        )
+    except BadRequestError as exc:
+        assert exc.detail == "Department approver must have the Department Head role."
+    else:
+        raise AssertionError("Expected BadRequestError")
+
+
+def test_overtime_approver_upsert_rejects_inactive_approver(monkeypatch):
+    department = _make_department(1)
+    department_head = _make_user(UUID(int=2), department=department, role="DH")
+    hr_user = _make_user(UUID(int=3), department=department, role="HR")
+    hr_user.is_active = False
+    FakeDepartmentRepository.departments = {department.id: department}
+    FakeUserRepository.users = {
+        department_head.id: department_head,
+        hr_user.id: hr_user,
+    }
+
+    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+
+    try:
+        anyio.run(
+            attendance_service.upsert_overtime_approver,
+            cast(AsyncSession, object()),
+            department.id,
+            OvertimeApproverUpsertRequest(
+                department_approver_id=department_head.id,
+                director_approver_id=None,
+                president_approver_id=None,
+                hr_approver_id=hr_user.id,
+            ),
+        )
+    except BadRequestError as exc:
+        assert exc.detail == "HR approver must be an active user."
+    else:
+        raise AssertionError("Expected BadRequestError")
+
+
+def test_overtime_approver_upsert_rejects_dh_from_other_department(monkeypatch):
+    department = _make_department(1)
+    other_department = _make_department(2, "IT")
+    department_head = _make_user(UUID(int=2), department=other_department, role="DH")
+    hr_user = _make_user(UUID(int=3), department=department, role="HR")
+    FakeDepartmentRepository.departments = {
+        department.id: department,
+        other_department.id: other_department,
+    }
+    FakeUserRepository.users = {
+        department_head.id: department_head,
+        hr_user.id: hr_user,
+    }
+
+    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
+    )
+
+    try:
+        anyio.run(
+            attendance_service.upsert_overtime_approver,
+            cast(AsyncSession, object()),
+            department.id,
+            OvertimeApproverUpsertRequest(
+                department_approver_id=department_head.id,
+                director_approver_id=None,
+                president_approver_id=None,
+                hr_approver_id=hr_user.id,
+            ),
+        )
+    except BadRequestError as exc:
+        assert exc.detail == "Department approver must belong to the same department."
+    else:
+        raise AssertionError("Expected BadRequestError")
+
+
 def test_create_overtime_fails_without_configured_approver(monkeypatch):
     department = _make_department(1)
     user = _make_user(UUID(int=1), department=department)
@@ -1082,6 +1546,7 @@ def test_create_overtime_fails_without_configured_approver(monkeypatch):
         attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
     )
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
 
     try:
         anyio.run(
@@ -1189,7 +1654,6 @@ def test_attendance_summary_groups_days(monkeypatch):
         day=24,
         month=3,
         year=2026,
-        is_regular=False,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
@@ -1203,11 +1667,28 @@ def test_attendance_summary_groups_days(monkeypatch):
         created_at=utc_now(),
         updated_at=utc_now(),
     )
+    leave_request = LeaveRequest(
+        id=1,
+        user_id=UUID(int=1),
+        leave_date=date(2026, 3, 24),
+        leave_type="PA",
+        info="Medical appointment",
+        first_approver_id=UUID(int=2),
+        first_approver_status=LeaveRequestStatus.APPROVED.value,
+        first_approver_at=utc_now(),
+        second_approver_id=None,
+        second_approver_status=None,
+        second_approver_at=None,
+        status=LeaveRequestStatus.APPROVED.value,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
 
     FakeUserRepository.users = {user.id: user}
     FakeEmployeeShiftAssignmentRepository.schedules = {schedule.id: schedule}
     FakeAttendanceRecordRepository.records = {record.id: record}
     FakeHolidayRepository.holidays = {holiday.id: holiday}
+    FakeLeaveRequestRepository.leave_requests = {leave_request.id: leave_request}
     FakeOvertimeRepository.overtime_requests = {overtime.id: overtime}
 
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
@@ -1218,6 +1699,7 @@ def test_attendance_summary_groups_days(monkeypatch):
     )
     monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
     monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
 
     response = anyio.run(_summary, UUID(int=1), 2026, 3)
@@ -1227,3 +1709,5 @@ def test_attendance_summary_groups_days(monkeypatch):
     assert response.days[23].attendance_records[0].id == 1
     assert response.days[23].holidays[0].name == "Holiday"
     assert response.days[23].overtime_approved is True
+    assert response.days[23].approved_leave is not None
+    assert response.days[23].approved_leave.leave_type == "PA"

@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from app.core.capabilities import is_staff_user
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError, PermissionDeniedError
+from app.core.time import utc_now
 from app.models.attendance import (
     AttendanceRecord,
     DepartmentRosterDay,
@@ -22,6 +24,7 @@ from app.models.attendance import (
     ShiftSwapRequest,
 )
 from app.models.department import Department
+from app.models.leave import LeaveRequestStatus
 from app.models.user import User
 from app.repositories.attendance import (
     AttendanceRecordRepository,
@@ -33,6 +36,7 @@ from app.repositories.attendance import (
     ShiftTemplateRepository,
     ShiftSwapRepository,
 )
+from app.repositories.leave import LeaveRequestRepository
 from app.repositories.departments import DepartmentRepository
 from app.repositories.users import UserRepository
 from app.services.notifications import create_notification_if_possible
@@ -41,6 +45,7 @@ from app.schemas.attendance import (
     AttendanceRecordCreateRequest,
     AttendanceRecordUpdateRequest,
     AttendanceSummaryDayRead,
+    AttendanceSummaryLeaveRead,
     AttendanceSummaryRead,
     DepartmentScheduleUpdateRequest,
     DepartmentRosterDayCreateRequest,
@@ -90,6 +95,74 @@ def _ensure_aware(value: datetime) -> datetime:
 def _normalize_role(role: str | None) -> str:
     normalized = (role or "EMP").strip().upper()
     return normalized or "EMP"
+
+
+def _approver_role_label(role: str) -> str:
+    labels = {
+        "DH": "Department Head",
+        "DIR": "Director",
+        "PRES": "President",
+        "HR": "HR",
+    }
+    return labels.get(role, role)
+
+
+async def _validate_overtime_approver_assignment(
+    *,
+    user_repository: UserRepository,
+    approver_id: UUID | None,
+    expected_role: str,
+    approver_label: str,
+    department_id: int,
+) -> None:
+    if approver_id is None:
+        return
+
+    user = await user_repository.get_by_id(approver_id)
+    if user is None:
+        raise NotFoundError("Approver user not found.")
+
+    if not user.is_active:
+        raise BadRequestError(f"{approver_label} must be an active user.")
+
+    role = _normalize_role(user.role)
+    if role != expected_role:
+        expected_role_label = _approver_role_label(expected_role)
+        raise BadRequestError(f"{approver_label} must have the {expected_role_label} role.")
+
+    if expected_role == "DH" and user.department_id != department_id:
+        raise BadRequestError(
+            "Department approver must belong to the same department."
+        )
+
+
+def _validate_holiday_date(day: int, month: int, year: int | None) -> None:
+    validation_year = year if year is not None else 2000
+    try:
+        date(validation_year, month, day)
+    except ValueError as exc:
+        raise BadRequestError("Holiday date is invalid.") from exc
+
+
+async def _ensure_holiday_date_available(
+    repository: HolidayRepository,
+    *,
+    day: int,
+    month: int,
+    year: int | None,
+    exclude_id: int | None = None,
+) -> None:
+    conflicting_holiday = await repository.find_conflict(
+        day=day,
+        month=month,
+        year=year,
+        exclude_id=exclude_id,
+    )
+    if conflicting_holiday is None:
+        return
+    if conflicting_holiday.year is None:
+        raise ConflictError("A recurring holiday already exists for this date.")
+    raise ConflictError("A holiday already exists for this date.")
 
 
 async def _get_overtime_approver_settings(
@@ -587,14 +660,21 @@ async def list_holidays(session: AsyncSession, year: int | None = None) -> list[
 
 
 async def create_holiday(session: AsyncSession, payload: HolidayCreateRequest) -> Holiday:
+    _validate_holiday_date(payload.day, payload.month, payload.year)
+    repository = HolidayRepository(session)
+    await _ensure_holiday_date_available(
+        repository,
+        day=payload.day,
+        month=payload.month,
+        year=payload.year,
+    )
     holiday = Holiday(
         name=payload.name,
         day=payload.day,
         month=payload.month,
         year=payload.year,
-        is_regular=payload.is_regular,
     )
-    return await HolidayRepository(session).create(holiday)
+    return await repository.create(holiday)
 
 
 async def update_holiday(
@@ -605,6 +685,17 @@ async def update_holiday(
     if holiday is None:
         raise NotFoundError("Holiday not found.")
     data = payload.model_dump(exclude_unset=True)
+    updated_day = data.get("day", holiday.day)
+    updated_month = data.get("month", holiday.month)
+    updated_year = data.get("year", holiday.year)
+    _validate_holiday_date(updated_day, updated_month, updated_year)
+    await _ensure_holiday_date_available(
+        repository,
+        day=updated_day,
+        month=updated_month,
+        year=updated_year,
+        exclude_id=holiday_id,
+    )
     for key, value in data.items():
         setattr(holiday, key, value)
     return await repository.save(holiday)
@@ -686,17 +777,34 @@ async def upsert_overtime_approver(
         raise NotFoundError("Department not found.")
 
     user_repository = UserRepository(session)
-    for approver_id in [
-        payload.department_approver_id,
-        payload.director_approver_id,
-        payload.president_approver_id,
-        payload.hr_approver_id,
-    ]:
-        if approver_id is None:
-            continue
-        user = await user_repository.get_by_id(approver_id)
-        if user is None:
-            raise NotFoundError("User not found.")
+    await _validate_overtime_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.department_approver_id,
+        expected_role="DH",
+        approver_label="Department approver",
+        department_id=department_id,
+    )
+    await _validate_overtime_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.director_approver_id,
+        expected_role="DIR",
+        approver_label="Director approver",
+        department_id=department_id,
+    )
+    await _validate_overtime_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.president_approver_id,
+        expected_role="PRES",
+        approver_label="President approver",
+        department_id=department_id,
+    )
+    await _validate_overtime_approver_assignment(
+        user_repository=user_repository,
+        approver_id=payload.hr_approver_id,
+        expected_role="HR",
+        approver_label="HR approver",
+        department_id=department_id,
+    )
 
     repository = OvertimeApproverRepository(session)
     overtime_approver = await repository.get_by_department_id(department_id)
@@ -742,6 +850,26 @@ async def create_overtime_request(
     user = await UserRepository(session).get_by_id(payload.user_id)
     if user is None:
         raise NotFoundError("User not found.")
+    existing_overtime = await OvertimeRepository(session).get_active_for_user_date(
+        payload.user_id,
+        payload.date,
+        statuses=(
+            OvertimeRequest.Status.PENDING.value,
+            OvertimeRequest.Status.APPROVED.value,
+        ),
+    )
+    if existing_overtime is not None:
+        raise ConflictError("An active overtime request already exists for this date.")
+    existing_leave = await LeaveRequestRepository(session).get_active_for_user_date(
+        payload.user_id,
+        payload.date,
+        statuses=(
+            LeaveRequestStatus.PENDING.value,
+            LeaveRequestStatus.APPROVED.value,
+        ),
+    )
+    if existing_leave is not None:
+        raise ConflictError("An active leave request already exists for this date.")
     approvers = await _build_overtime_approval_pool(session, user)
     if not approvers:
         raise NotFoundError("No overtime approver is configured for this user.")
@@ -769,7 +897,7 @@ async def create_overtime_request(
             sender_id=current_user.id,
             content=f"{requester_name} filed an overtime request for {overtime.date.isoformat()}.",
             url=(
-                f"/hr/overtime-management?scope=approvals&status=PEND"
+                f"/hr/overtime-management?scope=approvals&status=PENDING"
                 f"&month={overtime.date.month}&year={overtime.date.year}"
             ),
         )
@@ -830,12 +958,25 @@ async def respond_to_overtime_request(
     return overtime
 
 
-async def delete_overtime_request(session: AsyncSession, overtime_id: int) -> None:
+async def cancel_overtime_request(
+    session: AsyncSession, overtime_id: int, current_user: User
+) -> OvertimeRequest:
     repository = OvertimeRepository(session)
     overtime = await repository.get_by_id(overtime_id)
     if overtime is None:
         raise NotFoundError("Overtime request not found.")
-    await repository.delete(overtime)
+    if overtime.user_id != current_user.id and not is_staff_user(current_user):
+        raise PermissionDeniedError("You are not allowed to cancel this overtime request.")
+    if overtime.status != OvertimeRequest.Status.PENDING.value:
+        raise ConflictError("Only pending overtime requests can be cancelled.")
+
+    now = utc_now()
+    overtime.status = OvertimeRequest.Status.CANCELLED.value
+    for assignment in overtime.approver_pool:
+        if assignment.status == OvertimeRequest.Status.PENDING.value:
+            assignment.status = OvertimeRequest.Status.CANCELLED.value
+            assignment.acted_at = now
+    return await repository.save(overtime)
 
 
 async def list_shift_swap_requests(
@@ -962,6 +1103,12 @@ async def get_attendance_summary(
     )
     holidays = await HolidayRepository(session).list(year=year)
     overtime = await OvertimeRepository(session).list_for_user(user_id)
+    approved_leave_requests = await LeaveRequestRepository(session).list(
+        user_id=user_id,
+        status=LeaveRequestStatus.APPROVED.value,
+        year=year,
+        month=month,
+    )
 
     records_by_day: dict[int, list[AttendanceRecord]] = {}
     for record in attendance_records:
@@ -983,6 +1130,10 @@ async def get_attendance_summary(
         and overtime_request.date.year == year
         and overtime_request.date.month == month
     }
+    approved_leave_by_day = {
+        leave_request.leave_date.day: leave_request
+        for leave_request in approved_leave_requests
+    }
 
     summary_days: list[AttendanceSummaryDayRead] = []
     for day in range(1, total_days + 1):
@@ -1002,6 +1153,14 @@ async def get_attendance_summary(
                     for holiday in holidays_by_day.get(day, [])
                 ],
                 overtime_approved=day in overtime_by_day,
+                approved_leave=AttendanceSummaryLeaveRead(
+                    id=approved_leave_by_day[day].id,
+                    leave_date=approved_leave_by_day[day].leave_date,
+                    leave_type=approved_leave_by_day[day].leave_type,
+                    info=approved_leave_by_day[day].info,
+                )
+                if day in approved_leave_by_day
+                else None,
             )
         )
 

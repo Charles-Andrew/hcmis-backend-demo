@@ -76,6 +76,10 @@ Follow these rules before making changes.
 - Each schema change must include a migration file.
 - Keep migrations reversible when feasible (`upgrade` + `downgrade`).
 - Prefer additive changes for compatibility when possible.
+- Alembic revision IDs must stay short enough for the `alembic_version.version_num` column.
+- Do not use long descriptive revision IDs like full snake_case sentences.
+- Keep `revision` values within 32 characters, and prefer compact IDs such as `0037_req_cancel_ot_status`.
+- Before finalizing a new migration, run `uv run alembic upgrade head` to catch revision metadata issues, not just SQL issues.
 
 ## Auth And Security Rules
 

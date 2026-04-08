@@ -19,6 +19,7 @@ class LeaveRequestStatus(str, PyEnum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
 
 
 class LeaveApprover(Base):

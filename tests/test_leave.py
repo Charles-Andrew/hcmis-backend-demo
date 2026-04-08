@@ -19,6 +19,23 @@ from app.schemas.leave import (
 from app.services import leave as leave_service
 
 
+class FakeOvertimeRepository:
+    overtime_requests = {}
+
+    def __init__(self, session):
+        self.session = session
+
+    async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
+        for request in self.overtime_requests.values():
+            if (
+                request.user_id == user_id
+                and request.date == selected_date
+                and request.status in statuses
+            ):
+                return request
+        return None
+
+
 class FakeDepartmentRepository:
     departments: dict[int, Department] = {}
 
@@ -136,6 +153,16 @@ class FakeLeaveRequestRepository:
     async def get_by_id(self, leave_id: int):
         return self.leave_requests.get(leave_id)
 
+    async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
+        for request in self.leave_requests.values():
+            if (
+                request.user_id == user_id
+                and request.leave_date == selected_date
+                and request.status in statuses
+            ):
+                return request
+        return None
+
     async def create(self, leave_request: LeaveRequest):
         leave_request.id = self.next_id
         self.next_id += 1
@@ -186,6 +213,7 @@ def _reset_fakes():
     FakeLeaveRequestRepository.leave_requests = {}
     FakeLeaveRequestRepository.next_id = 1
     FakeLeaveRequestRepository.next_assignment_id = 1
+    FakeOvertimeRepository.overtime_requests = {}
 
 
 def _seed_users_and_department():
@@ -298,6 +326,10 @@ def test_leave_request_creation_uses_department_chain(monkeypatch):
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,
@@ -324,6 +356,10 @@ def test_leave_request_creation_for_department_head_routes_to_director_and_presi
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         leave_service.create_leave_request,
@@ -355,6 +391,10 @@ def test_leave_request_creation_for_hr_routes_to_president_then_director(monkeyp
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         leave_service.create_leave_request,
@@ -386,6 +426,7 @@ def test_leave_request_review_approves_in_one_step_and_consumes_credit(monkeypat
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,
@@ -410,6 +451,7 @@ def test_leave_request_rejection_does_not_consume_credit(monkeypatch):
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,
@@ -423,7 +465,7 @@ def test_leave_request_rejection_does_not_consume_credit(monkeypatch):
     assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
 
 
-def test_leave_request_deletion_reduces_used_credit_when_approved(monkeypatch):
+def test_cancel_leave_request_marks_pending_request_cancelled(monkeypatch):
     _reset_fakes()
     _seed_users_and_department()
 
@@ -432,21 +474,83 @@ def test_leave_request_deletion_reduces_used_credit_when_approved(monkeypatch):
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,
         {"leave_date": date(2026, 4, 3), "leave_type": "PA", "info": "Vacation"},
     )
-    anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE")
-    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 1
 
-    anyio.run(
-        leave_service.delete_leave_request,
+    cancelled = anyio.run(
+        leave_service.cancel_leave_request,
         cast(AsyncSession, object()),
         leave_request.id,
         FakeUserRepository.users[UUID(int=1)],
     )
+    assert cancelled.status == LeaveRequestStatus.CANCELLED.value
+    assert cancelled.first_approver_status == LeaveRequestStatus.CANCELLED.value
+    assert all(
+        assignment.status == LeaveRequestStatus.CANCELLED.value
+        for assignment in cancelled.approver_pool
+    )
     assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
+
+
+def test_create_leave_request_rejects_same_day_active_leave(monkeypatch):
+    _reset_fakes()
+    _seed_users_and_department()
+
+    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
+    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
+    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+
+    anyio.run(
+        _create_leave,
+        {"leave_date": date(2026, 4, 10), "leave_type": "PA", "info": "First"},
+    )
+
+    with pytest.raises(leave_service.ConflictError, match="active leave request already exists"):
+        anyio.run(
+            _create_leave,
+            {"leave_date": date(2026, 4, 10), "leave_type": "PA", "info": "Second"},
+        )
+
+
+def test_create_leave_request_rejects_same_day_active_overtime(monkeypatch):
+    from app.models.attendance import OvertimeRequest
+
+    _reset_fakes()
+    _seed_users_and_department()
+
+    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
+    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
+    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+
+    FakeOvertimeRepository.overtime_requests = {
+        1: OvertimeRequest(
+            id=1,
+            user_id=UUID(int=1),
+            approver_id=UUID(int=2),
+            info="Overtime",
+            date=date(2026, 4, 11),
+            status=OvertimeRequest.Status.PENDING.value,
+            approver_pool=[],
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    }
+
+    with pytest.raises(leave_service.ConflictError, match="active overtime request already exists"):
+        anyio.run(
+            _create_leave,
+            {"leave_date": date(2026, 4, 11), "leave_type": "PA", "info": "Leave"},
+        )
 
 
 def test_leave_credit_management_and_approver_settings(monkeypatch):
@@ -505,6 +609,7 @@ def test_paid_leave_request_requires_available_credit(monkeypatch):
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     with pytest.raises(leave_service.ConflictError):
         anyio.run(
@@ -522,6 +627,7 @@ def test_paid_leave_approval_fails_when_credit_depleted(monkeypatch):
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,
@@ -543,6 +649,7 @@ def test_leave_request_review_allows_second_pool_approver_to_act_first(monkeypat
     monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
 
     leave_request = anyio.run(
         _create_leave,

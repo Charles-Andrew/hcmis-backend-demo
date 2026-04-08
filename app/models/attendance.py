@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Column,
@@ -141,13 +142,17 @@ class DepartmentRosterDay(Base):
 
 class Holiday(Base):
     __tablename__ = "holidays"
+    __table_args__ = (
+        CheckConstraint("day >= 1 AND day <= 31", name="ck_holidays_day_range"),
+        CheckConstraint("month >= 1 AND month <= 12", name="ck_holidays_month_range"),
+        CheckConstraint("year IS NULL OR year >= 1900", name="ck_holidays_year_range"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     day: Mapped[int] = mapped_column(Integer, nullable=False)
     month: Mapped[int] = mapped_column(Integer, nullable=False)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_regular: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -226,9 +231,10 @@ class OvertimeRequest(Base):
     __tablename__ = "overtime_requests"
 
     class Status(str, PyEnum):
-        PENDING = "PEND"
-        APPROVED = "APP"
-        REJECTED = "REJ"
+        PENDING = "PENDING"
+        APPROVED = "APPROVED"
+        REJECTED = "REJECTED"
+        CANCELLED = "CANCELLED"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
@@ -236,7 +242,7 @@ class OvertimeRequest(Base):
     info: Mapped[str | None] = mapped_column(Text, nullable=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[str] = mapped_column(
-        String(4), default=Status.PENDING.value, nullable=False, index=True
+        String(20), default=Status.PENDING.value, nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -297,7 +303,7 @@ class OvertimeRequestApprover(Base):
     )
     approver_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(
-        String(4), default=OvertimeRequest.Status.PENDING.value, nullable=False, index=True
+        String(20), default=OvertimeRequest.Status.PENDING.value, nullable=False, index=True
     )
     acted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

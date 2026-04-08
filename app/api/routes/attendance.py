@@ -88,6 +88,7 @@ from app.services.bridge_commands import (
     queue_sync_users_command,
 )
 from app.services.attendance import (
+    cancel_overtime_request,
     copy_previous_month_employee_shift_assignments,
     create_attendance_record,
     create_daily_shift_record,
@@ -101,7 +102,6 @@ from app.services.attendance import (
     delete_attendance_record,
     delete_holiday,
     delete_overtime_approver,
-    delete_overtime_request,
     delete_shift_template,
     delete_employee_shift_assignment,
     delete_shift_swap_request,
@@ -632,7 +632,9 @@ async def get_overtime_requests(
     approver_id: UUID | None = Query(default=None),
     year: int | None = Query(default=None, ge=1900),
     month: int | None = Query(default=None, ge=1, le=12),
-    status: str | None = Query(default=None, pattern="^(PEND|APP|REJ)$"),
+    status: str | None = Query(
+        default=None, pattern="^(PENDING|APPROVED|REJECTED|CANCELLED)$"
+    ),
     department_id: int | None = Query(default=None),
     q: str | None = Query(default=None, alias="q"),
     session: AsyncSession = Depends(get_db_session),
@@ -711,13 +713,13 @@ async def post_respond_overtime(
     return await respond_to_overtime_request(session, overtime_id, current_user.id, payload)
 
 
-@router.delete("/overtime/{overtime_id}", response_model=None)
-async def remove_overtime_request(
+@router.patch("/overtime/{overtime_id}/cancel", response_model=OvertimeRequestRead)
+async def cancel_overtime(
     overtime_id: int,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> None:
-    await delete_overtime_request(session, overtime_id)
+    current_user: User = Depends(get_current_user),
+) -> OvertimeRequest:
+    return await cancel_overtime_request(session, overtime_id, current_user)
 
 
 @router.get("/shift-swaps", response_model=list[ShiftSwapRequestRead])

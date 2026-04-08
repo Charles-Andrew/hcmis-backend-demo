@@ -277,13 +277,31 @@ class HolidayRepository:
     async def list(self, year: int | None = None) -> list[Holiday]:
         statement = select(Holiday).order_by(Holiday.year.desc(), Holiday.month.desc(), Holiday.day.desc())
         if year is not None:
-            statement = statement.where((Holiday.year == year) | (Holiday.is_regular.is_(True)))
+            statement = statement.where((Holiday.year == year) | (Holiday.year.is_(None)))
         result = await self.session.execute(statement)
         return list(result.scalars().all())
 
     async def get_by_id(self, holiday_id: int) -> Holiday | None:
         result = await self.session.execute(select(Holiday).where(Holiday.id == holiday_id))
         return result.scalar_one_or_none()
+
+    async def find_conflict(
+        self,
+        *,
+        day: int,
+        month: int,
+        year: int | None,
+        exclude_id: int | None = None,
+    ) -> Holiday | None:
+        statement = select(Holiday).where(Holiday.day == day, Holiday.month == month)
+        if year is None:
+            statement = statement.where((Holiday.year.is_(None)) | (Holiday.year.is_not(None)))
+        else:
+            statement = statement.where((Holiday.year == year) | (Holiday.year.is_(None)))
+        if exclude_id is not None:
+            statement = statement.where(Holiday.id != exclude_id)
+        result = await self.session.execute(statement.order_by(Holiday.year.desc().nullsfirst()))
+        return result.scalars().first()
 
     async def create(self, holiday: Holiday) -> Holiday:
         self.session.add(holiday)
@@ -309,10 +327,10 @@ class OvertimeRepository:
     def _base_statement():
         return select(OvertimeRequest).options(
             selectinload(OvertimeRequest.user).selectinload(User.department),
-            selectinload(OvertimeRequest.approver),
-            selectinload(OvertimeRequest.approver_pool).selectinload(
-                OvertimeRequestApprover.approver
-            ),
+            selectinload(OvertimeRequest.approver).selectinload(User.department),
+            selectinload(OvertimeRequest.approver_pool)
+            .selectinload(OvertimeRequestApprover.approver)
+            .selectinload(User.department),
         )
 
     async def list_for_user(self, user_id: UUID) -> list[OvertimeRequest]:
@@ -386,6 +404,22 @@ class OvertimeRepository:
     async def get_by_id(self, overtime_id: int) -> OvertimeRequest | None:
         result = await self.session.execute(
             self._base_statement().where(OvertimeRequest.id == overtime_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_active_for_user_date(
+        self,
+        user_id: UUID,
+        selected_date: date,
+        *,
+        statuses: tuple[str, ...],
+    ) -> OvertimeRequest | None:
+        result = await self.session.execute(
+            self._base_statement().where(
+                OvertimeRequest.user_id == user_id,
+                OvertimeRequest.date == selected_date,
+                OvertimeRequest.status.in_(statuses),
+            )
         )
         return result.scalar_one_or_none()
 

@@ -179,6 +179,21 @@ class LeaveRequestRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_active_for_user_date(
+        self,
+        user_id: UUID,
+        selected_date: date,
+        *,
+        statuses: tuple[str, ...],
+    ) -> LeaveRequest | None:
+        statement = self._base_statement().where(
+            LeaveRequest.user_id == user_id,
+            LeaveRequest.leave_date == selected_date,
+            LeaveRequest.status.in_(statuses),
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def create(self, leave_request: LeaveRequest) -> LeaveRequest:
         self.session.add(leave_request)
         await self.session.commit()

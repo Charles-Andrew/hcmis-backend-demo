@@ -17,9 +17,9 @@ from app.schemas.leave import (
     LeaveTypeOptionRead,
 )
 from app.services.leave import (
+    cancel_leave_request,
     create_leave_request,
     delete_leave_approver,
-    delete_leave_request,
     get_my_leave_credit,
     list_leave_approvers,
     list_leave_credits,
@@ -116,13 +116,13 @@ async def patch_request_review(
     return await review_leave_request(session, leave_id, current_user, payload)
 
 
-@router.delete("/requests/{leave_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_request(
+@router.patch("/requests/{leave_id}/cancel", response_model=LeaveRequestRead)
+async def cancel_request(
     leave_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
-) -> None:
-    await delete_leave_request(session, leave_id, current_user)
+) -> LeaveRequest:
+    return await cancel_leave_request(session, leave_id, current_user)
 
 
 @router.get("/approvers", response_model=list[LeaveApproverRead])

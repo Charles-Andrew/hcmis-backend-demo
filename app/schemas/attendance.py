@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 from app.schemas.department import DepartmentRead
 from app.schemas.user import UserRead
@@ -156,7 +157,6 @@ class HolidayRead(BaseModel):
     day: int
     month: int
     year: int | None = None
-    is_regular: bool
     created_at: datetime
     updated_at: datetime
 
@@ -165,18 +165,32 @@ class HolidayRead(BaseModel):
 
 class HolidayCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    day: int
-    month: int
-    year: int | None = None
-    is_regular: bool = False
+    day: int = Field(ge=1, le=31)
+    month: int = Field(ge=1, le=12)
+    year: int | None = Field(default=None, ge=1900, le=9999)
+
+    @model_validator(mode="after")
+    def validate_calendar_date(self):
+        validation_year = self.year if self.year is not None else 2000
+        date(validation_year, self.month, self.day)
+        return self
 
 
 class HolidayUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    day: int | None = None
-    month: int | None = None
-    year: int | None = None
-    is_regular: bool | None = None
+    day: int | None = Field(default=None, ge=1, le=31)
+    month: int | None = Field(default=None, ge=1, le=12)
+    year: int | None = Field(default=None, ge=1900, le=9999)
+
+    @model_validator(mode="after")
+    def validate_calendar_date(self):
+        if self.day is None and self.month is None and self.year is None:
+            return self
+        validation_year = self.year if self.year is not None else 2000
+        validation_month = self.month if self.month is not None else 1
+        validation_day = self.day if self.day is not None else 1
+        date(validation_year, validation_month, validation_day)
+        return self
 
 
 class OvertimeApproverUpsertRequest(BaseModel):
@@ -290,6 +304,14 @@ class AttendanceSummaryDayRead(BaseModel):
     attendance_records: list[AttendanceRecordRead] = Field(default_factory=list)
     holidays: list[HolidayRead] = Field(default_factory=list)
     overtime_approved: bool = False
+    approved_leave: "AttendanceSummaryLeaveRead | None" = None
+
+
+class AttendanceSummaryLeaveRead(BaseModel):
+    id: int
+    leave_date: date
+    leave_type: str
+    info: str | None = None
 
 
 class AttendanceSummaryRead(BaseModel):
