@@ -9,7 +9,7 @@ DATABASE_URL ?= postgresql+asyncpg://hcmis:hcmis@localhost:$(POSTGRES_HOST_PORT)
 REDIS_URL ?= redis://localhost:$(REDIS_HOST_PORT)/0
 FASTAPI_APP ?= app/main.py
 
-.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev db-clear db-reset seed-initial seed-performance-questionnaires seed-bootstrap-hr reset-and-seed
+.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev db-clear seed-initial seed-performance-questionnaires seed-bootstrap-hr seed-payroll-policy reset-and-seed reset-and-bootstrap-prod
 
 ruff:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff check
@@ -44,16 +44,18 @@ dev: docker-config up wait-postgres wait-redis migrate
 db-clear:
 	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.clear_db_data
 
-db-reset:
-	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.reset_database
-
 seed-initial:
 	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.seed_initial_data
 
 seed-bootstrap-hr:
 	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.bootstrap_hr_account
 
+seed-payroll-policy:
+	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.seed_payroll_policy_official_ph
+
 seed-performance-questionnaires:
 	DATABASE_URL=$(DATABASE_URL) REDIS_URL=$(REDIS_URL) UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m app.scripts.import_performance_questionnaires
 
 reset-and-seed: db-clear seed-initial seed-performance-questionnaires
+
+reset-and-bootstrap: db-clear seed-bootstrap-hr seed-payroll-policy seed-performance-questionnaires

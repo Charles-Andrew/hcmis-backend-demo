@@ -22,6 +22,7 @@ from app.models.attendance import (
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
+    OvertimeApprover,
     OvertimeRequest,
     ShiftTemplate,
     ShiftSwapRequest,
@@ -62,6 +63,9 @@ from app.schemas.attendance import (
     HolidayCreateRequest,
     HolidayRead,
     HolidayUpdateRequest,
+    OvertimeApproverAssignmentRead,
+    OvertimeApproverRead,
+    OvertimeApproverUpsertRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRead,
     OvertimeRequestScope,
@@ -84,17 +88,19 @@ from app.services.bridge_commands import (
     queue_sync_users_command,
 )
 from app.services.attendance import (
+    copy_previous_month_employee_shift_assignments,
     create_attendance_record,
     create_daily_shift_record,
     create_employee_shift_assignment,
     create_holiday,
-    copy_previous_month_employee_shift_assignments,
     create_overtime_request,
     generate_month_employee_shift_assignments,
+    get_my_overtime_approver_assignment,
     create_shift_template,
     create_shift_swap_request,
     delete_attendance_record,
     delete_holiday,
+    delete_overtime_approver,
     delete_overtime_request,
     delete_shift_template,
     delete_employee_shift_assignment,
@@ -104,6 +110,7 @@ from app.services.attendance import (
     list_daily_shift_records,
     list_employee_shift_assignments,
     list_holidays,
+    list_overtime_approvers,
     list_overtime_requests,
     list_shift_swap_requests,
     list_shift_templates,
@@ -111,6 +118,7 @@ from app.services.attendance import (
     respond_to_overtime_request,
     respond_to_shift_swap_request,
     sync_device_attendance,
+    upsert_overtime_approver,
     update_attendance_record,
     update_department_schedule,
     update_employee_shift_assignment,
@@ -646,6 +654,41 @@ async def get_overtime_requests(
     )
 
 
+@router.get("/overtime-approvers", response_model=list[OvertimeApproverRead])
+async def get_overtime_approvers(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[OvertimeApprover]:
+    return await list_overtime_approvers(session)
+
+
+@router.get("/overtime-approvers/me", response_model=OvertimeApproverAssignmentRead)
+async def get_my_overtime_approver(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> OvertimeApproverAssignmentRead:
+    return await get_my_overtime_approver_assignment(session, current_user)
+
+
+@router.put("/overtime-approvers/{department_id}", response_model=OvertimeApproverRead)
+async def put_overtime_approver(
+    department_id: int,
+    payload: OvertimeApproverUpsertRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> OvertimeApprover:
+    return await upsert_overtime_approver(session, department_id, payload)
+
+
+@router.delete("/overtime-approvers/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_overtime_approver(
+    department_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> None:
+    await delete_overtime_approver(session, department_id)
+
+
 @router.post("/overtime", response_model=OvertimeRequestRead, status_code=status.HTTP_201_CREATED)
 async def post_overtime_request(
     payload: OvertimeRequestCreateRequest,
@@ -655,7 +698,7 @@ async def post_overtime_request(
     is_staff = is_staff_user(current_user)
     if payload.user_id != current_user.id and not is_staff:
         raise PermissionDeniedError("You do not have permission to create this overtime request.")
-    return await create_overtime_request(session, payload)
+    return await create_overtime_request(session, current_user, payload)
 
 
 @router.post("/overtime/{overtime_id}/respond", response_model=OvertimeRequestRead)

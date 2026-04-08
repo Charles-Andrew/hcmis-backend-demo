@@ -1,7 +1,7 @@
 """add payroll policy source metadata table
 
 Revision ID: 0019_payroll_policy_sources
-Revises: 0018_payroll_policy_rule_dimensions
+Revises: 0018_payroll_policy_rule_dims
 Create Date: 2026-04-06 00:15:00.000000
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "0019_payroll_policy_sources"
-down_revision = "0018_payroll_policy_rule_dimensions"
+down_revision = "0018_payroll_policy_rule_dims"
 branch_labels = None
 depends_on = None
 

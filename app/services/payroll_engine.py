@@ -10,10 +10,10 @@ from app.repositories.payroll import (
     FixedCompensationRepository,
     PayrollPolicyRuleRepository,
     PayrollPolicyVersionRepository,
-    PayrollRunInputRepository,
     PayslipRepository,
 )
 from app.schemas.payroll import (
+    FixedCompensationRead,
     PayrollComputationRead,
     PayslipSummaryComparisonRead,
     PayslipSummaryRead,
@@ -21,6 +21,7 @@ from app.schemas.payroll import (
 from app.services.payroll import (
     get_active_mp2_for_user,
     get_payslip_summary,
+    get_settings,
     resolve_mp2_effective_date,
 )
 
@@ -38,6 +39,41 @@ def _to_decimal(value: Decimal | int | str | float | None) -> Decimal:
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
+
+
+def _split_amount_evenly(amount: Decimal) -> tuple[Decimal, Decimal]:
+    first_half = _quantize(amount / Decimal("2"))
+    second_half = _quantize(amount - first_half)
+    return first_half, second_half
+
+
+def _resolve_automatic_deductions(
+    monthly_mandatory: dict[str, Decimal],
+    monthly_mp2: Decimal,
+    schedule: str,
+    period: str | None,
+) -> tuple[dict[str, Decimal], Decimal, list[str]]:
+    notes: list[str] = []
+
+    if schedule == "SPLIT_BOTH_CUTOFFS":
+        per_cutoff_mandatory = {
+            name: _split_amount_evenly(amount)[0 if period == "1ST" else 1]
+            for name, amount in monthly_mandatory.items()
+        }
+        mp2_deduction = _split_amount_evenly(monthly_mp2)[0 if period == "1ST" else 1]
+        return per_cutoff_mandatory, mp2_deduction, notes
+
+    if period == "2ND":
+        return monthly_mandatory, monthly_mp2, notes
+
+    if monthly_mp2 > Decimal("0.00"):
+        notes.append("MP2 deduction skipped for non-second cutoff period.")
+
+    return (
+        {name: Decimal("0.00") for name in monthly_mandatory},
+        Decimal("0.00"),
+        notes,
+    )
 
 
 def _decimal_attr(rule: object, *names: str, default: Decimal | int | str | float | None = None) -> Decimal:
@@ -268,8 +304,6 @@ async def compute_payslip_summary_v2(
     session: AsyncSession,
     payslip_id: int,
     policy_version_id: int | None = None,
-    payroll_run_id: int | None = None,
-    include_unapproved_run_inputs: bool = False,
 ) -> PayrollComputationRead:
     payslip = await PayslipRepository(session).get_by_id(payslip_id)
     if payslip is None:
@@ -291,29 +325,14 @@ async def compute_payslip_summary_v2(
         (_to_decimal(comp.amount) / Decimal("2") for comp in fixed_compensations if payslip.user in comp.users),
         Decimal("0.00"),
     )
-    if payroll_run_id is not None:
-        run_inputs = await PayrollRunInputRepository(session).list_for_run_user(
-            payroll_run_id,
-            payslip.user_id,
-            approved_only=not include_unapproved_run_inputs,
-        )
-        variable_comp_total = sum(
-            (_to_decimal(item.amount) for item in run_inputs if item.item_type.category == "earning"),
-            Decimal("0.00"),
-        )
-        variable_ded_total = sum(
-            (_to_decimal(item.amount) for item in run_inputs if item.item_type.category == "deduction"),
-            Decimal("0.00"),
-        )
-    else:
-        variable_comp_total = sum(
-            (_to_decimal(item.amount) for item in payslip.variable_compensations),
-            Decimal("0.00"),
-        )
-        variable_ded_total = sum(
-            (_to_decimal(item.amount) for item in payslip.variable_deductions),
-            Decimal("0.00"),
-        )
+    variable_comp_total = sum(
+        (_to_decimal(item.amount) for item in payslip.variable_compensations),
+        Decimal("0.00"),
+    )
+    variable_ded_total = sum(
+        (_to_decimal(item.amount) for item in payslip.variable_deductions),
+        Decimal("0.00"),
+    )
 
     gross_pay = base_salary + fixed_total + variable_comp_total
     gross_per_cutoff = (gross_pay / Decimal("2")).quantize(Decimal("0.01"))
@@ -323,21 +342,25 @@ async def compute_payslip_summary_v2(
         gross_per_cutoff,
         resolved_policy_version_id,
     )
-    mandatory_total = sum(mandatory.values(), Decimal("0.00"))
     effective_date = resolve_mp2_effective_date(payslip.month, payslip.year, payslip.period)
     mp2_deduction = await _compute_mp2_deduction_for_user(
         session,
         payslip.user_id,
         effective_date,
     )
+    settings = await get_settings(session)
+    deduction_schedule = (
+        payslip.automatic_deduction_schedule or settings.automatic_deduction_schedule
+    )
+    included_mandatory, included_mp2_deduction, notes = _resolve_automatic_deductions(
+        mandatory,
+        mp2_deduction,
+        deduction_schedule,
+        payslip.period,
+    )
 
-    # Existing behavior applies mandatory deductions on second cutoff only.
     total_deductions = variable_ded_total
-    notes: list[str] = []
-    if payslip.period == "2ND":
-        total_deductions += mandatory_total + mp2_deduction
-    elif mp2_deduction > Decimal("0.00"):
-        notes.append("MP2 deduction skipped for non-second cutoff period.")
+    total_deductions += sum(included_mandatory.values(), Decimal("0.00")) + included_mp2_deduction
 
     total_deductions = total_deductions.quantize(Decimal("0.01"))
     net_pay = (gross_per_cutoff - total_deductions).quantize(Decimal("0.01"))
@@ -346,9 +369,9 @@ async def compute_payslip_summary_v2(
         gross_pay=gross_per_cutoff,
         total_deductions=total_deductions,
         net_pay=net_pay,
-        mandatory_deductions=mandatory,
+        mandatory_deductions=included_mandatory,
         variable_deductions=variable_ded_total.quantize(Decimal("0.01")),
-        mp2_deduction=mp2_deduction,
+        mp2_deduction=included_mp2_deduction,
         included_in_total_deductions=True,
         notes=notes,
     )
@@ -377,4 +400,40 @@ async def compare_payslip_summary(
             ).quantize(Decimal("0.01")),
             "net_pay": (new_summary.net_pay - legacy_net).quantize(Decimal("0.01")),
         },
+    )
+
+
+async def get_payslip_summary_v2(session: AsyncSession, payslip_id: int) -> PayslipSummaryRead:
+    payslip = await PayslipRepository(session).get_by_id(payslip_id)
+    if payslip is None:
+        raise NotFoundError("Payslip not found.")
+
+    fixed_compensations = await FixedCompensationRepository(session).list(
+        month=payslip.month,
+        year=payslip.year,
+    )
+    fixed_compensations_read = [
+        FixedCompensationRead.model_validate(compensation)
+        for compensation in fixed_compensations
+    ]
+    summary = await compute_payslip_summary_v2(session, payslip_id)
+    base_salary = _to_decimal(payslip.salary)
+    mandatory = summary.mandatory_deductions
+
+    return PayslipSummaryRead(
+        period=payslip.period,
+        salary=(base_salary / Decimal("2")).quantize(Decimal("0.01"))
+        if payslip.salary is not None
+        else None,
+        compensations=fixed_compensations_read,
+        variable_compensations=payslip.variable_compensations,
+        gross_pay=summary.gross_pay,
+        variable_deductions=payslip.variable_deductions,
+        total_deductions=summary.total_deductions,
+        net_salary=summary.net_pay,
+        sss_deduction=mandatory.get("sss", Decimal("0.00")),
+        philhealth_deduction=mandatory.get("philhealth", Decimal("0.00")),
+        pag_ibig_deduction=mandatory.get("pag_ibig", Decimal("0.00")),
+        mp2_deduction=summary.mp2_deduction,
+        tax_deduction=mandatory.get("tax", Decimal("0.00")),
     )

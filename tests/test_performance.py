@@ -521,6 +521,96 @@ def test_questionnaire_and_user_evaluation_flow(monkeypatch):
     assert any(evaluation.evaluator_id == UUID(int=2) for evaluation in finalized.evaluations)
 
 
+def test_peer_assignment_notifies_only_when_cycle_is_finalized(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(performance_service, "QuestionnaireRepository", FakeQuestionnaireRepository)
+    monkeypatch.setattr(performance_service, "UserEvaluationRepository", FakeUserEvaluationRepository)
+    monkeypatch.setattr(performance_service, "EvaluationRepository", FakeEvaluationRepository)
+    monkeypatch.setattr(performance_service, "UserRepository", FakeUserRepository)
+
+    sent_notifications: list[dict[str, object]] = []
+
+    async def fake_create_notifications_if_possible(
+        session,
+        recipient_ids,
+        content,
+        url,
+        sender_id=None,
+    ):
+        sent_notifications.append(
+            {
+                "recipient_ids": list(recipient_ids),
+                "content": content,
+                "url": url,
+                "sender_id": sender_id,
+            }
+        )
+
+    async def fake_create_notification_if_possible(*args, **kwargs):
+        sent_notifications.append({"single": True})
+
+    monkeypatch.setattr(
+        performance_service,
+        "create_notifications_if_possible",
+        fake_create_notifications_if_possible,
+    )
+    monkeypatch.setattr(
+        performance_service,
+        "create_notification_if_possible",
+        fake_create_notification_if_possible,
+    )
+
+    questionnaire = anyio.run(
+        performance_service.create_questionnaire,
+        cast(AsyncSession, object()),
+        QuestionnaireCreateRequest(
+            code="pe-2026",
+            title="Performance Evaluation 2026",
+            content={
+                "questionnaire_content": [
+                    {
+                        "domain_number": "1",
+                        "questions": [{"indicator_number": "1", "rating": None}],
+                    }
+                ]
+            },
+        ),
+    )
+
+    user_evaluation = anyio.run(
+        performance_service.create_user_evaluation,
+        cast(AsyncSession, object()),
+        UserEvaluationCreateRequest(
+            evaluatee_id=UUID(int=1),
+            questionnaire_id=questionnaire.id,
+            quarter="FQ",
+            year=2026,
+        ),
+    )
+
+    anyio.run(
+        performance_service.assign_user_evaluation_evaluator,
+        cast(AsyncSession, object()),
+        user_evaluation.id,
+        EvaluationAssignmentRequest(evaluator_id=UUID(int=2)),
+    )
+    assert sent_notifications == []
+
+    anyio.run(
+        performance_service.toggle_user_evaluation_finalized,
+        cast(AsyncSession, object()),
+        user_evaluation.id,
+    )
+
+    assert len(sent_notifications) == 1
+    assert sent_notifications[0]["recipient_ids"] == [UUID(int=2)]
+    assert sent_notifications[0]["url"] == f"/performance-evaluations?cycle_id={user_evaluation.id}"
+    assert "You were assigned to evaluate Employee One for QFQ 2026." in cast(
+        str, sent_notifications[0]["content"]
+    )
+
+
 def test_evaluation_summary_and_reset(monkeypatch):
     _reset()
     _seed()

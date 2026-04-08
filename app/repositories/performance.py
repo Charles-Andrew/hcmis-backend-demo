@@ -199,18 +199,19 @@ class EvaluationRepository:
                 Evaluation.evaluator_id == evaluator_id,
             )
         )
-        return result.scalar_one_or_none()
+        item = result.scalar_one_or_none()
+        if item is None:
+            return None
+        return await self.get_by_id(item.id)
 
     async def create(self, item: Evaluation) -> Evaluation:
         self.session.add(item)
         await self.session.commit()
-        await self.session.refresh(item)
-        return item
+        return await self.get_by_id(item.id)  # type: ignore[return-value]
 
     async def save(self, item: Evaluation) -> Evaluation:
         await self.session.commit()
-        await self.session.refresh(item)
-        return item
+        return await self.get_by_id(item.id)  # type: ignore[return-value]
 
     async def delete(self, item: Evaluation) -> None:
         await self.session.delete(item)

@@ -13,13 +13,8 @@ from app.models.payroll import (
     FixedCompensation,
     Position,
     Mp2Enrollment,
-    PayrollItemType,
     PayrollPolicyVersion,
     PayrollPolicySource,
-    PayrollRun,
-    PayrollRunInput,
-    PayrollRunInputAudit,
-    PayrollRunItem,
     PolicySssBracket,
     PolicyPhilhealthRule,
     PolicyPagibigRule,
@@ -360,189 +355,6 @@ class PayrollPolicyRuleRepository:
         await self.session.commit()
 
 
-class PayrollRunRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list(self, month: int | None = None, year: int | None = None) -> List[PayrollRun]:
-        statement = select(PayrollRun).order_by(
-            PayrollRun.year.desc(),
-            PayrollRun.month.desc(),
-            PayrollRun.period.desc(),
-        )
-        if month is not None:
-            statement = statement.where(PayrollRun.month == month)
-        if year is not None:
-            statement = statement.where(PayrollRun.year == year)
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def get_by_id(self, payroll_run_id: int) -> PayrollRun | None:
-        result = await self.session.execute(select(PayrollRun).where(PayrollRun.id == payroll_run_id))
-        return result.scalar_one_or_none()
-
-    async def get_by_identity(self, month: int, year: int, period: str) -> PayrollRun | None:
-        result = await self.session.execute(
-            select(PayrollRun).where(
-                PayrollRun.month == month,
-                PayrollRun.year == year,
-                PayrollRun.period == period,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def create(self, item: PayrollRun) -> PayrollRun:
-        self.session.add(item)
-        await self.session.commit()
-        await self.session.refresh(item)
-        return item
-
-    async def save(self, item: PayrollRun) -> PayrollRun:
-        await self.session.commit()
-        await self.session.refresh(item)
-        return item
-
-
-class PayrollItemTypeRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list(self, active_only: bool = False) -> List[PayrollItemType]:
-        statement = select(PayrollItemType).order_by(
-            PayrollItemType.display_order.asc(),
-            PayrollItemType.name.asc(),
-        )
-        if active_only:
-            statement = statement.where(PayrollItemType.is_active.is_(True))
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def get_by_id(self, item_type_id: int) -> PayrollItemType | None:
-        result = await self.session.execute(
-            select(PayrollItemType).where(PayrollItemType.id == item_type_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_by_code(self, code: str) -> PayrollItemType | None:
-        result = await self.session.execute(
-            select(PayrollItemType).where(func.lower(PayrollItemType.code) == code.lower())
-        )
-        return result.scalar_one_or_none()
-
-    async def create(self, item: PayrollItemType) -> PayrollItemType:
-        self.session.add(item)
-        await self.session.commit()
-        await self.session.refresh(item)
-        return item
-
-    async def save(self, item: PayrollItemType) -> PayrollItemType:
-        await self.session.commit()
-        await self.session.refresh(item)
-        return item
-
-
-class PayrollRunInputRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    @staticmethod
-    def _with_relationships(statement):
-        return statement.options(
-            selectinload(PayrollRunInput.item_type),
-            selectinload(PayrollRunInput.user).selectinload(User.department),
-            selectinload(PayrollRunInput.creator),
-            selectinload(PayrollRunInput.approver),
-        )
-
-    async def list(
-        self,
-        payroll_run_id: int,
-        user_id: UUID | None = None,
-    ) -> List[PayrollRunInput]:
-        statement = self._with_relationships(
-            select(PayrollRunInput).where(PayrollRunInput.payroll_run_id == payroll_run_id)
-        ).order_by(PayrollRunInput.created_at.asc(), PayrollRunInput.id.asc())
-        if user_id is not None:
-            statement = statement.where(PayrollRunInput.user_id == user_id)
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def get_by_id(self, run_input_id: int) -> PayrollRunInput | None:
-        result = await self.session.execute(
-            self._with_relationships(select(PayrollRunInput)).where(PayrollRunInput.id == run_input_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def list_for_run_user(
-        self,
-        payroll_run_id: int,
-        user_id: UUID,
-        approved_only: bool = False,
-    ) -> List[PayrollRunInput]:
-        statement = self._with_relationships(
-            select(PayrollRunInput).where(
-                PayrollRunInput.payroll_run_id == payroll_run_id,
-                PayrollRunInput.user_id == user_id,
-            )
-        ).order_by(PayrollRunInput.created_at.asc(), PayrollRunInput.id.asc())
-        if approved_only:
-            statement = statement.where(PayrollRunInput.status == "approved")
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def create(self, item: PayrollRunInput) -> PayrollRunInput:
-        self.session.add(item)
-        await self.session.commit()
-        refreshed = await self.get_by_id(item.id)
-        return refreshed if refreshed is not None else item
-
-    async def save(self, item: PayrollRunInput) -> PayrollRunInput:
-        await self.session.commit()
-        refreshed = await self.get_by_id(item.id)
-        return refreshed if refreshed is not None else item
-
-    async def delete(self, item: PayrollRunInput) -> None:
-        await self.session.delete(item)
-        await self.session.commit()
-
-
-class PayrollRunInputAuditRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def create(self, item: PayrollRunInputAudit) -> PayrollRunInputAudit:
-        self.session.add(item)
-        await self.session.commit()
-        await self.session.refresh(item)
-        return item
-
-
-class PayrollRunItemRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list(self, payroll_run_id: int) -> List[PayrollRunItem]:
-        result = await self.session.execute(
-            select(PayrollRunItem)
-            .where(PayrollRunItem.payroll_run_id == payroll_run_id)
-            .order_by(PayrollRunItem.id.asc())
-        )
-        return list(result.scalars().all())
-
-    async def clear(self, payroll_run_id: int) -> None:
-        await self.session.execute(
-            delete(PayrollRunItem).where(PayrollRunItem.payroll_run_id == payroll_run_id)
-        )
-        await self.session.commit()
-
-    async def create_many(self, items: List[PayrollRunItem]) -> List[PayrollRunItem]:
-        self.session.add_all(items)
-        await self.session.commit()
-        for item in items:
-            await self.session.refresh(item)
-        return items
-
-
 class Mp2EnrollmentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -630,13 +442,17 @@ class PositionRepository:
     async def create(self, position: Position) -> Position:
         self.session.add(position)
         await self.session.commit()
-        await self.session.refresh(position)
-        return position
+        refreshed = await self.get_by_id(position.id)
+        if refreshed is None:
+            return position
+        return refreshed
 
     async def save(self, position: Position) -> Position:
         await self.session.commit()
-        await self.session.refresh(position)
-        return position
+        refreshed = await self.get_by_id(position.id)
+        if refreshed is None:
+            return position
+        return refreshed
 
     async def delete(self, position: Position) -> None:
         await self.session.delete(position)

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,20 +9,129 @@ from sqlalchemy.exc import IntegrityError
 from app.core.exceptions import ConflictError
 from app.core.exceptions import NotFoundError
 from app.core.security import generate_temporary_password, hash_password
-from app.models.user import User
+from app.models.user import User, UserPositionAssignment
 from app.repositories.departments import DepartmentRepository
+from app.repositories.payroll import PositionRepository
 from app.repositories.users import UserRepository
-from app.services.notifications import create_notification_if_possible
-from app.services.profile_photo_storage import (
-    delete_profile_photo_by_url,
-    save_profile_photo,
-)
+from app.repositories.users import UserPositionAssignmentRepository
 from app.schemas.user import UserCreateRequest
 from app.schemas.user import (
     UserBiometricUpdateRequest,
     UserProfileUpdateRequest,
     UserUpdateRequest,
 )
+from app.services.notifications import create_notification_if_possible
+from app.services.profile_photo_storage import (
+    delete_profile_photo_by_url,
+    save_profile_photo,
+)
+from app.core.time import utc_now
+
+
+def _normalize_rank_components(
+    position_id: int | None,
+    rank_level: int | None,
+    step_number: int | None,
+) -> tuple[int | None, int | None, int | None]:
+    if position_id is None and rank_level is None and step_number is None:
+        return None, None, None
+    if position_id is None or rank_level is None:
+        raise ConflictError("Position and rank level are required together.")
+    if step_number is not None and step_number < 1:
+        raise ConflictError("Step number must be at least 1.")
+    return position_id, rank_level, step_number
+
+
+def _default_assignment_effective_from(
+    assignment_effective_from: date | None,
+    date_of_hiring: date | None,
+) -> date:
+    if assignment_effective_from is not None:
+        return assignment_effective_from
+    if date_of_hiring is not None:
+        return date_of_hiring
+    return utc_now().date()
+
+
+async def _validate_position_assignment(
+    session: AsyncSession,
+    position_id: int | None,
+    rank_level: int | None,
+    step_number: int | None,
+) -> tuple[int | None, int | None, int | None]:
+    position_id, rank_level, step_number = _normalize_rank_components(
+        position_id,
+        rank_level,
+        step_number,
+    )
+    if position_id is None:
+        return None, None, None
+    position = await PositionRepository(session).get_by_id(position_id)
+    if position is None:
+        raise NotFoundError("Position not found.")
+    return position_id, rank_level, step_number
+
+
+async def _derive_rank_label(
+    session: AsyncSession,
+    position_id: int | None,
+    rank_level: int | None,
+    step_number: int | None,
+) -> str | None:
+    if position_id is None or rank_level is None:
+        return None
+    position = await PositionRepository(session).get_by_id(position_id)
+    if position is None:
+        raise NotFoundError("Position not found.")
+    if step_number is None:
+        return f"{position.code}-{rank_level}"
+    return f"{position.code}-{rank_level} - STEP {step_number}"
+
+
+async def _upsert_current_position_assignment(
+    session: AsyncSession,
+    user: User,
+    *,
+    position_id: int,
+    rank_level: int,
+    step_number: int | None,
+    effective_from: date,
+    change_reason: str | None,
+    changed_by: UUID | None,
+) -> None:
+    assignment_repository = UserPositionAssignmentRepository(session)
+    active_assignment = await assignment_repository.get_active_for_user_on(user.id, effective_from)
+    if (
+        active_assignment is not None
+        and active_assignment.position_id == position_id
+        and active_assignment.rank_level == rank_level
+        and active_assignment.step_number == step_number
+        and active_assignment.effective_from == effective_from
+    ):
+        return
+    overlapping = await assignment_repository.get_overlapping_assignments(
+        user.id,
+        effective_from,
+        None,
+    )
+    for assignment in overlapping:
+        if assignment.effective_to is None or assignment.effective_to >= effective_from:
+            assignment.effective_to = effective_from
+            if assignment.effective_to is not None:
+                assignment.effective_to = assignment.effective_to - timedelta(days=1)
+            await assignment_repository.save(assignment)
+    await assignment_repository.create(
+        UserPositionAssignment(
+            user_id=user.id,
+            position_id=position_id,
+            rank_level=rank_level,
+            step_number=step_number,
+            effective_from=effective_from,
+            effective_to=None,
+            change_reason=change_reason,
+            changed_by=changed_by,
+        )
+    )
 
 
 async def list_users(
@@ -73,6 +182,13 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         if department is None:
             raise NotFoundError("Department not found.")
 
+    position_id, rank_level, step_number = await _validate_position_assignment(
+        session,
+        payload.position_id,
+        payload.rank_level,
+        payload.step_number,
+    )
+
     password_hash = hash_password(payload.password)
     user = User(
         email=email,
@@ -85,6 +201,9 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         civil_status=payload.civil_status,
         religion=payload.religion,
         rank=payload.rank,
+        position_id=position_id,
+        rank_level=rank_level,
+        step_number=step_number,
         employee_number=payload.employee_number,
         biometric_uid=payload.biometric_uid,
         role=payload.role,
@@ -99,10 +218,28 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         is_active=payload.is_active,
         is_superuser=payload.is_superuser,
     )
+    if position_id is not None and rank_level is not None:
+        user.rank = await _derive_rank_label(session, position_id, rank_level, step_number)
     try:
-        return await user_repository.create(user)
+        created_user = await user_repository.create(user)
     except IntegrityError as exc:
         raise ConflictError("User already exists.") from exc
+    if position_id is not None and rank_level is not None:
+        await _upsert_current_position_assignment(
+            session,
+            created_user,
+            position_id=position_id,
+            rank_level=rank_level,
+            step_number=step_number,
+            effective_from=_default_assignment_effective_from(
+                payload.assignment_effective_from,
+                payload.date_of_hiring,
+            ),
+            change_reason=payload.assignment_change_reason,
+            changed_by=None,
+        )
+        created_user = await user_repository.get_by_id(created_user.id) or created_user
+    return created_user
 
 
 async def get_user(session: AsyncSession, user_id: UUID) -> User:
@@ -124,6 +261,11 @@ async def update_user(
 
     data = payload.model_dump(exclude_unset=True)
     department_id = data.pop("department_id", None) if "department_id" in data else None
+    position_id = data.pop("position_id", user.position_id) if "position_id" in data else user.position_id
+    rank_level = data.pop("rank_level", user.rank_level) if "rank_level" in data else user.rank_level
+    step_number = data.pop("step_number", user.step_number) if "step_number" in data else user.step_number
+    assignment_effective_from = data.pop("assignment_effective_from", None)
+    assignment_change_reason = data.pop("assignment_change_reason", None)
     if "department_id" in payload.model_fields_set:
         if department_id is None:
             user.department_id = None
@@ -133,10 +275,44 @@ async def update_user(
                 raise NotFoundError("Department not found.")
             user.department_id = department.id
 
+    position_id, rank_level, step_number = await _validate_position_assignment(
+        session,
+        position_id,
+        rank_level,
+        step_number,
+    )
+
     for field_name, value in data.items():
         setattr(user, field_name, value)
 
-    return await user_repository.save(user)
+    assignment_changed = (
+        position_id != user.position_id
+        or rank_level != user.rank_level
+        or step_number != user.step_number
+    )
+    user.position_id = position_id
+    user.rank_level = rank_level
+    user.step_number = step_number
+    if position_id is not None and rank_level is not None:
+        user.rank = await _derive_rank_label(session, position_id, rank_level, step_number)
+
+    saved_user = await user_repository.save(user)
+    if position_id is not None and rank_level is not None and assignment_changed:
+        await _upsert_current_position_assignment(
+            session,
+            saved_user,
+            position_id=position_id,
+            rank_level=rank_level,
+            step_number=step_number,
+            effective_from=_default_assignment_effective_from(
+                assignment_effective_from,
+                saved_user.date_of_hiring,
+            ),
+            change_reason=assignment_change_reason,
+            changed_by=None,
+        )
+        saved_user = await user_repository.get_by_id(saved_user.id) or saved_user
+    return saved_user
 
 
 async def toggle_user_status(session: AsyncSession, user_id: UUID) -> User:

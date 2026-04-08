@@ -38,6 +38,12 @@ fixed_compensation_users = Table(
 
 class PayrollSetting(Base):
     __tablename__ = "payroll_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "automatic_deduction_schedule IN ('SECOND_CUTOFF_ONLY', 'SPLIT_BOTH_CUTOFFS')",
+            name="ck_payroll_settings_automatic_deduction_schedule",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     minimum_wage_amount: Mapped[Decimal] = mapped_column(
@@ -52,6 +58,9 @@ class PayrollSetting(Base):
     )
     basic_salary_steps: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     max_position_rank: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    automatic_deduction_schedule: Mapped[str] = mapped_column(
+        String(32), default="SECOND_CUTOFF_ONLY", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -133,12 +142,18 @@ class Payslip(Base):
             "period",
             name="uq_payslips_identity",
         ),
+        CheckConstraint(
+            "automatic_deduction_schedule IS NULL OR automatic_deduction_schedule IN "
+            "('SECOND_CUTOFF_ONLY', 'SPLIT_BOTH_CUTOFFS')",
+            name="ck_payslips_automatic_deduction_schedule",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     rank: Mapped[str | None] = mapped_column(String(500), nullable=True)
     salary: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    automatic_deduction_schedule: Mapped[str | None] = mapped_column(String(32), nullable=True)
     period: Mapped[str | None] = mapped_column(String(3), nullable=True)
     released: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     release_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -451,164 +466,11 @@ class PolicyMinimumWageOrder(Base):
     )
 
 
-class PayrollRun(Base):
-    __tablename__ = "payroll_runs"
-    __table_args__ = (
-        UniqueConstraint("month", "year", "period", name="uq_payroll_runs_period"),
-        CheckConstraint("month >= 1 AND month <= 12", name="ck_payroll_runs_month"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    month: Mapped[int] = mapped_column(Integer, nullable=False)
-    year: Mapped[int] = mapped_column(Integer, nullable=False)
-    period: Mapped[str] = mapped_column(String(3), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
-    policy_version_id: Mapped[int | None] = mapped_column(
-        ForeignKey("payroll_policy_versions.id"), nullable=True
-    )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
-    )
-
-    inputs = relationship(
-        "PayrollRunInput", back_populates="payroll_run", cascade="all, delete-orphan"
-    )
-
-
-class PayrollRunItem(Base):
-    __tablename__ = "payroll_run_items"
-    __table_args__ = (
-        UniqueConstraint("payroll_run_id", "user_id", name="uq_payroll_run_items_user"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    payroll_run_id: Mapped[int] = mapped_column(
-        ForeignKey("payroll_runs.id"), nullable=False, index=True
-    )
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    payslip_id: Mapped[int | None] = mapped_column(ForeignKey("payslips.id"), nullable=True)
-    gross_pay: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    total_deductions: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    net_pay: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    breakdown: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
-    )
-
-
-class PayrollItemType(Base):
-    __tablename__ = "payroll_item_types"
-    __table_args__ = (
-        UniqueConstraint("code", name="uq_payroll_item_types_code"),
-        CheckConstraint(
-            "category IN ('earning', 'deduction')",
-            name="ck_payroll_item_types_category",
-        ),
-        CheckConstraint(
-            "behavior IN ('fixed', 'formula', 'variable')",
-            name="ck_payroll_item_types_behavior",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    code: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    category: Mapped[str] = mapped_column(String(20), nullable=False)
-    behavior: Mapped[str] = mapped_column(String(20), default="variable", nullable=False)
-    taxable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
-    )
-
-    run_inputs = relationship("PayrollRunInput", back_populates="item_type")
-
-
-class PayrollRunInput(Base):
-    __tablename__ = "payroll_run_inputs"
-    __table_args__ = (
-        CheckConstraint(
-            "source IN ('manual', 'import', 'system')",
-            name="ck_payroll_run_inputs_source",
-        ),
-        CheckConstraint(
-            "status IN ('draft', 'approved')",
-            name="ck_payroll_run_inputs_status",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    payroll_run_id: Mapped[int] = mapped_column(
-        ForeignKey("payroll_runs.id"), nullable=False, index=True
-    )
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    payroll_item_type_id: Mapped[int] = mapped_column(
-        ForeignKey("payroll_item_types.id"), nullable=False, index=True
-    )
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    remarks: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
-    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    approved_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
-    )
-
-    payroll_run = relationship("PayrollRun", back_populates="inputs")
-    item_type = relationship("PayrollItemType", back_populates="run_inputs")
-    user = relationship("User", foreign_keys=[user_id])
-    creator = relationship("User", foreign_keys=[created_by])
-    approver = relationship("User", foreign_keys=[approved_by])
-    audits = relationship(
-        "PayrollRunInputAudit", back_populates="run_input", cascade="all, delete-orphan"
-    )
-
-
-class PayrollRunInputAudit(Base):
-    __tablename__ = "payroll_run_input_audits"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    payroll_run_input_id: Mapped[int] = mapped_column(
-        ForeignKey("payroll_run_inputs.id"), nullable=False, index=True
-    )
-    action: Mapped[str] = mapped_column(String(20), nullable=False)
-    actor_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-
-    run_input = relationship("PayrollRunInput", back_populates="audits")
-    actor = relationship("User")
-
-
 class PayrollAdjustment(Base):
     __tablename__ = "payroll_adjustments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    payroll_run_id: Mapped[int | None] = mapped_column(ForeignKey("payroll_runs.id"), nullable=True)
     payslip_id: Mapped[int | None] = mapped_column(ForeignKey("payslips.id"), nullable=True)
     adjustment_type: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(500), nullable=False)

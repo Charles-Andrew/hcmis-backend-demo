@@ -1,6 +1,6 @@
 """add payroll run inputs and item types
 
-Revision ID: 0025_payroll_run_inputs_and_item_types
+Revision ID: 0025_payroll_run_inputs_items
 Revises: 0024_remove_paused_mp2_status
 Create Date: 2026-04-08 11:15:00.000000
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from datetime import datetime, timezone
 
 
-revision = "0025_payroll_run_inputs_and_item_types"
+revision = "0025_payroll_run_inputs_items"
 down_revision = "0024_remove_paused_mp2_status"
 branch_labels = None
 depends_on = None

@@ -1,7 +1,7 @@
 """add mp2 enrollments
 
 Revision ID: 0022_mp2_enrollments
-Revises: 0021_min_wage_unique_by_policy_version
+Revises: 0021_min_wage_policy_version
 Create Date: 2026-04-07 23:40:00.000000
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "0022_mp2_enrollments"
-down_revision = "0021_min_wage_unique_by_policy_version"
+down_revision = "0021_min_wage_policy_version"
 branch_labels = None
 depends_on = None
 

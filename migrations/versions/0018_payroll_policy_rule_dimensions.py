@@ -1,6 +1,6 @@
 """add payroll policy rule dimensions for PH statutory support
 
-Revision ID: 0018_payroll_policy_rule_dimensions
+Revision ID: 0018_payroll_policy_rule_dims
 Revises: 0017_payroll_policy_foundation
 Create Date: 2026-04-05 23:55:00.000000
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0018_payroll_policy_rule_dimensions"
+revision = "0018_payroll_policy_rule_dims"
 down_revision = "0017_payroll_policy_foundation"
 branch_labels = None
 depends_on = None

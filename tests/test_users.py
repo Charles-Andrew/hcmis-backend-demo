@@ -1,4 +1,5 @@
 import anyio
+from datetime import date
 from typing import cast
 from uuid import UUID
 
@@ -8,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.core.time import utc_now
 from app.models.department import Department
+from app.models.payroll import Position
 from app.models.user import User
+from app.models.user import UserPositionAssignment
 from app.schemas.user import UserBiometricUpdateRequest
 from app.schemas.user import UserUpdateRequest
 from app.services import users as user_service
@@ -86,6 +89,54 @@ class FakeUserRepository:
         return user
 
 
+class FakePositionRepository:
+    positions: dict[int, Position] = {}
+
+    def __init__(self, session):
+        self.session = session
+
+    async def get_by_id(self, position_id: int):
+        return self.positions.get(position_id)
+
+
+class FakeUserPositionAssignmentRepository:
+    items: dict[int, UserPositionAssignment] = {}
+    next_id = 1
+
+    def __init__(self, session):
+        self.session = session
+
+    async def get_active_for_user_on(self, user_id: UUID, effective_date):
+        candidates = [
+            item
+            for item in self.items.values()
+            if item.user_id == user_id
+            and item.effective_from <= effective_date
+            and (item.effective_to is None or item.effective_to >= effective_date)
+        ]
+        candidates.sort(key=lambda item: (item.effective_from, item.id), reverse=True)
+        return candidates[0] if candidates else None
+
+    async def get_overlapping_assignments(self, user_id: UUID, effective_from, effective_to, exclude_assignment_id=None):
+        return [
+            item
+            for item in self.items.values()
+            if item.user_id == user_id
+            and item.id != exclude_assignment_id
+            and (item.effective_to is None or item.effective_to >= effective_from)
+        ]
+
+    async def create(self, assignment: UserPositionAssignment):
+        assignment.id = self.next_id
+        self.next_id += 1
+        self.items[assignment.id] = assignment
+        return assignment
+
+    async def save(self, assignment: UserPositionAssignment):
+        self.items[assignment.id] = assignment
+        return assignment
+
+
 async def _list_users(
     query: str | None = None,
     department_id: int | None = None,
@@ -129,12 +180,27 @@ async def _update_biometric(user_id: UUID, payload: UserBiometricUpdateRequest):
 def setup_function():
     FakeDepartmentRepository.departments = {}
     FakeUserRepository.users = {}
+    FakePositionRepository.positions = {}
+    FakeUserPositionAssignmentRepository.items = {}
+    FakeUserPositionAssignmentRepository.next_id = 1
 
 
 def _make_department(department_id: int, name: str):
     department = Department(name=name, code=name[:3].upper(), is_active=True)
     department.id = department_id
     return department
+
+
+def _make_position(position_id: int, code: str, title: str = "Position", salary_grade: int = 1):
+    position = Position(
+        id=position_id,
+        code=code,
+        title=title,
+        salary_grade=salary_grade,
+        is_active=True,
+    )
+    position.departments = []
+    return position
 
 
 def _make_user(
@@ -264,6 +330,41 @@ def test_update_user_changes_department_and_status(monkeypatch):
     assert response.first_name == "Alicia"
     assert response.department_id == 2
     assert response.is_active is False
+
+
+def test_update_user_creates_position_assignment_history(monkeypatch):
+    accounting = _make_department(1, "Accounting")
+    FakeDepartmentRepository.departments = {1: accounting}
+    FakePositionRepository.positions = {1: _make_position(1, "OPS")}
+
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    FakeUserRepository.users = {user.id: user}
+
+    monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(user_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(
+        user_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    response = anyio.run(
+        _update_user,
+        user.id,
+        UserUpdateRequest(
+            position_id=1,
+            rank_level=2,
+            step_number=1,
+            assignment_effective_from=date(2026, 1, 1),
+        ),
+    )
+
+    assert response.position_id == 1
+    assert response.rank_level == 2
+    assert response.step_number == 1
+    assert response.rank == "OPS-2 - STEP 1"
+    assert len(FakeUserPositionAssignmentRepository.items) == 1
 
 
 def test_update_user_missing_department_raises(monkeypatch):

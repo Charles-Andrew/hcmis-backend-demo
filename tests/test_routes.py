@@ -32,6 +32,8 @@ def test_core_routes_are_registered():
     assert "/leave/requests/me" in paths
     assert "/leave/requests/review" in paths
     assert "/leave/approvers" in paths
+    assert "/attendance/overtime-approvers" in paths
+    assert "/attendance/overtime-approvers/me" in paths
     assert "/leave/credits/me" in paths
     assert "/payroll/policy-versions" in paths
     assert "/payroll/policy-versions/seed-ph-baseline" in paths
@@ -40,15 +42,6 @@ def test_core_routes_are_registered():
     assert "/payroll/policy-versions/{policy_version_id}/activate" in paths
     assert "/payroll/policy-versions/{policy_version_id}/rules" in paths
     assert "/payroll/policy-versions/{policy_version_id}/sources" in paths
-    assert "/payroll/runs" in paths
-    assert "/payroll/runs/{payroll_run_id}/validate" in paths
-    assert "/payroll/runs/{payroll_run_id}/approve" in paths
-    assert "/payroll/runs/{payroll_run_id}/post" in paths
-    assert "/payroll/runs/{payroll_run_id}/release" in paths
-    assert "/payroll/runs/{payroll_run_id}/items" in paths
-    assert "/payroll/runs/{payroll_run_id}/inputs" in paths
-    assert "/payroll/run-inputs/{run_input_id}" in paths
-    assert "/payroll/item-types" in paths
     assert "/payroll/positions" in paths
     assert "/payroll/payslips" in paths
     assert "/payroll/payslips/{payslip_id}/summary-comparison" in paths

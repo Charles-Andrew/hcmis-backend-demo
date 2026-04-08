@@ -1,7 +1,7 @@
 """add deleted attendance tombstones
 
-Revision ID: 0026_deleted_attendance_tombstones
-Revises: 0025_payroll_run_inputs_and_item_types
+Revision ID: 0026_deleted_attendance_tombs
+Revises: 0025_payroll_run_inputs_items
 Create Date: 2026-04-08 16:30:00.000000
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0026_deleted_attendance_tombstones"
-down_revision = "0025_payroll_run_inputs_and_item_types"
+revision = "0026_deleted_attendance_tombs"
+down_revision = "0025_payroll_run_inputs_items"
 branch_labels = None
 depends_on = None
 

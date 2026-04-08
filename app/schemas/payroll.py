@@ -19,6 +19,7 @@ class PayrollSettingRead(BaseModel):
     basic_salary_step_multiplier: Decimal
     basic_salary_steps: int
     max_position_rank: int
+    automatic_deduction_schedule: str
     created_at: datetime
     updated_at: datetime
 
@@ -276,6 +277,10 @@ class PayrollSettingUpdateRequest(BaseModel):
     basic_salary_step_multiplier: Decimal | None = None
     basic_salary_steps: int | None = Field(default=None, ge=1)
     max_position_rank: int | None = Field(default=None, ge=1)
+    automatic_deduction_schedule: str | None = Field(
+        default=None,
+        pattern="^(SECOND_CUTOFF_ONLY|SPLIT_BOTH_CUTOFFS)$",
+    )
 
 
 class PositionRead(BaseModel):
@@ -371,6 +376,7 @@ class PayslipRead(BaseModel):
     user_id: UUID
     rank: str | None = None
     salary: Decimal | None = None
+    automatic_deduction_schedule: str | None = None
     period: str | None = None
     released: bool
     release_date: datetime | None = None
@@ -430,115 +436,6 @@ class PayslipSummaryComparisonRead(BaseModel):
     legacy_summary: PayslipSummaryRead
     new_engine: PayrollComputationRead
     differences: dict[str, Decimal] = Field(default_factory=dict)
-
-
-class PayrollItemTypeRead(BaseModel):
-    id: int
-    code: str
-    name: str
-    category: str
-    behavior: str
-    taxable: bool
-    is_active: bool
-    display_order: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PayrollItemTypeUpsertRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=100)
-    name: str = Field(min_length=1, max_length=255)
-    category: str = Field(pattern="^(earning|deduction)$")
-    behavior: str = Field(default="variable", pattern="^(fixed|formula|variable)$")
-    taxable: bool = False
-    is_active: bool = True
-    display_order: int = Field(default=0, ge=0)
-
-    @field_validator("code", mode="before")
-    @classmethod
-    def normalize_item_type_code(cls, value: str) -> str:
-        return value.strip().upper() if isinstance(value, str) else value
-
-    @field_validator("name", mode="before")
-    @classmethod
-    def normalize_item_type_name(cls, value: str) -> str:
-        return value.strip() if isinstance(value, str) else value
-
-
-class PayrollRunRead(BaseModel):
-    id: int
-    month: int
-    year: int
-    period: str
-    status: str
-    policy_version_id: int | None = None
-    started_at: datetime | None = None
-    posted_at: datetime | None = None
-    released_at: datetime | None = None
-    locked_at: datetime | None = None
-    created_by: UUID | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PayrollRunCreateRequest(BaseModel):
-    month: int = Field(ge=1, le=12)
-    year: int = Field(ge=2000)
-    period: str = Field(pattern="^(1ST|2ND)$")
-    policy_version_id: int = Field(ge=1)
-
-
-class PayrollRunInputRead(BaseModel):
-    id: int
-    payroll_run_id: int
-    user_id: UUID
-    payroll_item_type_id: int
-    amount: Decimal
-    remarks: str | None = None
-    source: str
-    status: str
-    created_by: UUID | None = None
-    approved_by: UUID | None = None
-    approved_at: datetime | None = None
-    item_type: PayrollItemTypeRead
-    user: UserRead | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PayrollRunInputCreateRequest(BaseModel):
-    user_id: UUID
-    payroll_item_type_id: int = Field(ge=1)
-    amount: Decimal = Field(ge=0)
-    remarks: str | None = Field(default=None, max_length=1000)
-
-
-class PayrollRunInputUpdateRequest(BaseModel):
-    payroll_item_type_id: int | None = Field(default=None, ge=1)
-    amount: Decimal | None = Field(default=None, ge=0)
-    remarks: str | None = Field(default=None, max_length=1000)
-
-
-class PayrollRunItemRead(BaseModel):
-    id: int
-    payroll_run_id: int
-    user_id: UUID
-    payslip_id: int | None = None
-    gross_pay: Decimal
-    total_deductions: Decimal
-    net_pay: Decimal
-    breakdown: dict = Field(default_factory=dict)
-    status: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class ThirteenthMonthPayVariableDeductionRead(BaseModel):

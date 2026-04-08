@@ -17,7 +17,7 @@ from app.models.payroll import (
     Position,
     ThirteenthMonthPay,
 )
-from app.models.user import User
+from app.models.user import User, UserPositionAssignment
 from app.schemas.payroll import (
     Mp2EnrollmentCreateRequest,
     PositionUpsertRequest,
@@ -29,6 +29,7 @@ from app.schemas.payroll import (
     ThirteenthMonthPayUpdateRequest,
     ThirteenthMonthPayVariableDeductionUpsertRequest,
 )
+from app.services import payroll_engine
 from app.services import payroll as payroll_service
 
 
@@ -263,6 +264,25 @@ class FakePayslipVariableDeductionRepository(FakePayslipVariableCompensationRepo
     pass
 
 
+class FakeUserPositionAssignmentRepository:
+    items: dict[int, UserPositionAssignment] = {}
+    next_id = 1
+
+    def __init__(self, session):
+        self.session = session
+
+    async def get_active_for_user_on(self, user_id: UUID, effective_date):
+        candidates = [
+            item
+            for item in self.items.values()
+            if item.user_id == user_id
+            and item.effective_from <= effective_date
+            and (item.effective_to is None or item.effective_to >= effective_date)
+        ]
+        candidates.sort(key=lambda item: (item.effective_from, item.id), reverse=True)
+        return candidates[0] if candidates else None
+
+
 class FakeThirteenthMonthPayRepository:
     items: dict[int, ThirteenthMonthPay] = {}
     next_id = 1
@@ -323,6 +343,8 @@ def _reset():
     FakePayslipVariableCompensationRepository.next_id = 1
     FakePayslipVariableDeductionRepository.items = {}
     FakePayslipVariableDeductionRepository.next_id = 1
+    FakeUserPositionAssignmentRepository.items = {}
+    FakeUserPositionAssignmentRepository.next_id = 1
     FakeThirteenthMonthPayRepository.items = {}
     FakeThirteenthMonthPayRepository.next_id = 1
     FakeThirteenthMonthPayVariableDeductionRepository.items = {}
@@ -362,6 +384,7 @@ def _seed():
         basic_salary_step_multiplier=Decimal("1.0000"),
         basic_salary_steps=2,
         max_position_rank=3,
+        automatic_deduction_schedule="SECOND_CUTOFF_ONLY",
         created_at=utc_now(),
         updated_at=utc_now(),
     )
@@ -374,6 +397,11 @@ def test_payroll_settings_and_positions(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
 
     settings = anyio.run(payroll_service.get_settings, cast(AsyncSession, object()))
     assert settings.minimum_wage_amount == Decimal("1000.00")
@@ -381,9 +409,13 @@ def test_payroll_settings_and_positions(monkeypatch):
     updated = anyio.run(
         payroll_service.update_settings,
         cast(AsyncSession, object()),
-        PayrollSettingUpdateRequest(minimum_wage_amount=Decimal("1200.00")),
+        PayrollSettingUpdateRequest(
+            minimum_wage_amount=Decimal("1200.00"),
+            automatic_deduction_schedule="SPLIT_BOTH_CUTOFFS",
+        ),
     )
     assert updated.minimum_wage_amount == Decimal("1200.00")
+    assert updated.automatic_deduction_schedule == "SPLIT_BOTH_CUTOFFS"
 
     position = anyio.run(
         payroll_service.create_position,
@@ -422,6 +454,11 @@ def test_payslip_calculation_and_variable_adjustments(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
     monkeypatch.setattr(payroll_service, "FixedCompensationRepository", FakeFixedCompensationRepository)
     monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
     monkeypatch.setattr(payroll_service, "PayslipVariableCompensationRepository", FakePayslipVariableCompensationRepository)
@@ -476,6 +513,11 @@ def test_payslip_salary_is_none_when_rank_exceeds_max_position_rank(monkeypatch)
     monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
     monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
 
     user = FakeUserRepository.users[UUID(int=1)]
@@ -490,6 +532,92 @@ def test_payslip_salary_is_none_when_rank_exceeds_max_position_rank(monkeypatch)
     assert payslip.salary is None
 
 
+def test_payslip_uses_effective_position_assignment_before_legacy_rank(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    user = FakeUserRepository.users[UUID(int=1)]
+    user.rank = "OPS-99"
+    user.position_id = 1
+    user.rank_level = 2
+    user.step_number = 1
+    FakeUserPositionAssignmentRepository.items[1] = UserPositionAssignment(
+        id=1,
+        user_id=user.id,
+        position_id=1,
+        rank_level=2,
+        step_number=1,
+        effective_from=date(2026, 1, 1),
+        effective_to=None,
+    )
+    FakeUserPositionAssignmentRepository.items[1].position = FakePositionRepository.positions[1]
+
+    payslip = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
+    )
+    assert payslip.rank == "OPS-2 - STEP 1"
+    assert payslip.salary == Decimal("1000.00")
+
+
+def test_rank_level_increases_salary_grade_from_position_start(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    settings = FakePayrollSettingRepository.setting
+    assert settings is not None
+    settings.minimum_wage_amount = Decimal("10520.00")
+    settings.basic_salary_multiplier = Decimal("1.2000")
+    settings.basic_salary_step_multiplier = Decimal("1.0300")
+
+    position = FakePositionRepository.positions[1]
+    position.salary_grade = 2
+
+    user = FakeUserRepository.users[UUID(int=1)]
+    user.rank = "OPS-5"
+    user.position_id = 1
+    user.rank_level = 5
+    user.step_number = None
+
+    FakeUserPositionAssignmentRepository.items[1] = UserPositionAssignment(
+        id=1,
+        user_id=user.id,
+        position_id=1,
+        rank_level=5,
+        step_number=None,
+        effective_from=date(2026, 1, 1),
+        effective_to=None,
+    )
+    FakeUserPositionAssignmentRepository.items[1].position = position
+
+    payslip = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
+    )
+    assert payslip.rank == "OPS-5"
+    assert payslip.salary == Decimal("26177.13")
+
+
 def test_mp2_enrollment_and_summary_deduction(monkeypatch):
     _reset()
     _seed()
@@ -498,6 +626,11 @@ def test_mp2_enrollment_and_summary_deduction(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
     monkeypatch.setattr(payroll_service, "FixedCompensationRepository", FakeFixedCompensationRepository)
     monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
     monkeypatch.setattr(payroll_service, "PayslipVariableCompensationRepository", FakePayslipVariableCompensationRepository)
@@ -543,6 +676,163 @@ def test_mp2_enrollment_and_summary_deduction(monkeypatch):
     assert summary["total_deductions"] == Decimal("123.45")
 
 
+def test_automatic_deductions_default_to_second_cutoff_only():
+    mandatory, mp2, notes = payroll_engine._resolve_automatic_deductions(
+        {
+            "sss": Decimal("100.00"),
+            "philhealth": Decimal("80.00"),
+            "pag_ibig": Decimal("50.00"),
+            "tax": Decimal("200.00"),
+        },
+        Decimal("300.00"),
+        "SECOND_CUTOFF_ONLY",
+        "1ST",
+    )
+
+    assert mandatory == {
+        "sss": Decimal("0.00"),
+        "philhealth": Decimal("0.00"),
+        "pag_ibig": Decimal("0.00"),
+        "tax": Decimal("0.00"),
+    }
+    assert mp2 == Decimal("0.00")
+    assert notes == ["MP2 deduction skipped for non-second cutoff period."]
+
+
+def test_automatic_deductions_can_split_across_both_cutoffs():
+    first_mandatory, first_mp2, first_notes = payroll_engine._resolve_automatic_deductions(
+        {
+            "sss": Decimal("101.00"),
+            "philhealth": Decimal("80.00"),
+            "pag_ibig": Decimal("50.00"),
+            "tax": Decimal("200.00"),
+        },
+        Decimal("301.00"),
+        "SPLIT_BOTH_CUTOFFS",
+        "1ST",
+    )
+    second_mandatory, second_mp2, second_notes = payroll_engine._resolve_automatic_deductions(
+        {
+            "sss": Decimal("101.00"),
+            "philhealth": Decimal("80.00"),
+            "pag_ibig": Decimal("50.00"),
+            "tax": Decimal("200.00"),
+        },
+        Decimal("301.00"),
+        "SPLIT_BOTH_CUTOFFS",
+        "2ND",
+    )
+
+    assert first_mandatory == {
+        "sss": Decimal("50.50"),
+        "philhealth": Decimal("40.00"),
+        "pag_ibig": Decimal("25.00"),
+        "tax": Decimal("100.00"),
+    }
+    assert second_mandatory == first_mandatory
+    assert first_mp2 == Decimal("150.50")
+    assert second_mp2 == Decimal("150.50")
+    assert first_notes == []
+    assert second_notes == []
+
+
+def test_new_payslip_snapshots_deduction_schedule(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    settings = FakePayrollSettingRepository.setting
+    assert settings is not None
+    settings.automatic_deduction_schedule = "SPLIT_BOTH_CUTOFFS"
+
+    payslip = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="1ST"),
+    )
+
+    assert payslip.automatic_deduction_schedule == "SPLIT_BOTH_CUTOFFS"
+
+
+def test_existing_payslip_keeps_snapshotted_deduction_schedule(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    settings = FakePayrollSettingRepository.setting
+    assert settings is not None
+    settings.automatic_deduction_schedule = "SECOND_CUTOFF_ONLY"
+
+    payslip = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="1ST"),
+    )
+    assert payslip.automatic_deduction_schedule == "SECOND_CUTOFF_ONLY"
+
+    settings.automatic_deduction_schedule = "SPLIT_BOTH_CUTOFFS"
+
+    refreshed = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="1ST"),
+    )
+    assert refreshed.id == payslip.id
+    assert refreshed.automatic_deduction_schedule == "SECOND_CUTOFF_ONLY"
+
+
+def test_second_cutoff_inherits_month_schedule_from_released_first_cutoff(monkeypatch):
+    _reset()
+    _seed()
+    monkeypatch.setattr(payroll_service, "PayrollSettingRepository", FakePayrollSettingRepository)
+    monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
+    monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(payroll_service, "PayslipRepository", FakePayslipRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
+
+    settings = FakePayrollSettingRepository.setting
+    assert settings is not None
+    settings.automatic_deduction_schedule = "SPLIT_BOTH_CUTOFFS"
+
+    first_cutoff = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="1ST"),
+    )
+    first_cutoff.released = True
+    assert first_cutoff.automatic_deduction_schedule == "SPLIT_BOTH_CUTOFFS"
+
+    settings.automatic_deduction_schedule = "SECOND_CUTOFF_ONLY"
+
+    second_cutoff = anyio.run(
+        payroll_service.get_or_create_payslip,
+        cast(AsyncSession, object()),
+        PayslipCreateRequest(user_id=UUID(int=1), month=1, year=2026, period="2ND"),
+    )
+
+    assert second_cutoff.automatic_deduction_schedule == "SPLIT_BOTH_CUTOFFS"
+
+
 def test_thirteenth_month_pay_flow(monkeypatch):
     _reset()
     _seed()
@@ -550,6 +840,11 @@ def test_thirteenth_month_pay_flow(monkeypatch):
     monkeypatch.setattr(payroll_service, "PositionRepository", FakePositionRepository)
     monkeypatch.setattr(payroll_service, "DepartmentRepository", FakeDepartmentRepository)
     monkeypatch.setattr(payroll_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        payroll_service,
+        "UserPositionAssignmentRepository",
+        FakeUserPositionAssignmentRepository,
+    )
     monkeypatch.setattr(payroll_service, "ThirteenthMonthPayRepository", FakeThirteenthMonthPayRepository)
     monkeypatch.setattr(payroll_service, "ThirteenthMonthPayVariableDeductionRepository", FakeThirteenthMonthPayVariableDeductionRepository)
 

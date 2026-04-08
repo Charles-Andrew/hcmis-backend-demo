@@ -5,29 +5,15 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.time import utc_now
-from app.models.payroll import (
-    PayrollRunInputAudit,
-    PayrollRunInput,
-    PayrollPolicyVersion,
-    PayrollRun,
-    PayrollRunItem,
-)
+from app.models.payroll import PayrollPolicyVersion
 from app.repositories.payroll import (
-    PayrollRunInputAuditRepository,
-    PayrollRunInputRepository,
     PayrollPolicyRuleRepository,
     PayrollPolicySourceRepository,
     PayrollPolicyVersionRepository,
-    PayrollRunItemRepository,
-    PayrollRunRepository,
-    PayslipVariableCompensationRepository,
-    PayslipVariableDeductionRepository,
-    PayslipRepository,
 )
 from app.schemas.payroll import (
     PayrollPolicySourcesDetailRead,
@@ -40,9 +26,7 @@ from app.schemas.payroll import (
     PayrollPolicySourceRead,
     PayrollPolicyVersionCreateRequest,
     PayrollPolicyVersionRead,
-    PayrollRunCreateRequest,
 )
-from app.services.payroll_engine import compute_payslip_summary_v2
 
 
 PH_POLICY_KEY = "PH_STATUTORY"
@@ -117,16 +101,6 @@ async def delete_policy_version(
         raise NotFoundError("Payroll policy version not found.")
     if version.is_active:
         raise ConflictError("Cannot delete an active payroll policy version.")
-
-    payroll_run = (
-        await session.execute(
-            select(PayrollRun.id).where(PayrollRun.policy_version_id == policy_version_id).limit(1)
-        )
-    ).scalar_one_or_none()
-    if payroll_run is not None:
-        raise ConflictError(
-            "Cannot delete a payroll policy version that is already linked to payroll runs."
-        )
 
     await rule_repository.clear_policy_rules(policy_version_id)
     await PayrollPolicySourceRepository(session).replace(
@@ -453,199 +427,6 @@ async def update_policy_version_sources(
         applied_at=utc_now(),
     )
     return await get_policy_version_sources(session, policy_version_id)
-
-
-async def list_payroll_runs(
-    session: AsyncSession,
-    month: int | None = None,
-    year: int | None = None,
-) -> list[PayrollRun]:
-    return await PayrollRunRepository(session).list(month=month, year=year)
-
-
-async def create_payroll_run(
-    session: AsyncSession,
-    payload: PayrollRunCreateRequest,
-    created_by: UUID | None,
-) -> PayrollRun:
-    repository = PayrollRunRepository(session)
-    existing = await repository.get_by_identity(payload.month, payload.year, payload.period)
-    if existing is not None:
-        raise ConflictError("Payroll run for this period already exists.")
-    policy = await PayrollPolicyVersionRepository(session).get_by_id(
-        payload.policy_version_id
-    )
-    if policy is None:
-        raise NotFoundError("Payroll policy version not found.")
-    if not policy.is_active:
-        raise ConflictError("Selected payroll policy version is not active.")
-    item = PayrollRun(
-        month=payload.month,
-        year=payload.year,
-        period=payload.period,
-        policy_version_id=payload.policy_version_id,
-        created_by=created_by,
-        status="DRAFT",
-    )
-    return await repository.create(item)
-
-
-async def validate_payroll_run(session: AsyncSession, payroll_run_id: int) -> PayrollRun:
-    run_repository = PayrollRunRepository(session)
-    item_repository = PayrollRunItemRepository(session)
-    payslip_repository = PayslipRepository(session)
-
-    payroll_run = await run_repository.get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    if payroll_run.status not in {"DRAFT", "VALIDATED"}:
-        raise ConflictError("Only draft or validated runs can be validated.")
-    if payroll_run.policy_version_id is None:
-        raise ConflictError("Payroll run policy version is required.")
-
-    payslips = await payslip_repository.list(
-        month=payroll_run.month,
-        year=payroll_run.year,
-        period=payroll_run.period,
-    )
-    if not payslips:
-        raise ConflictError("No payslips found for this payroll run period.")
-
-    await item_repository.clear(payroll_run.id)
-
-    run_items: list[PayrollRunItem] = []
-    for payslip in payslips:
-        summary = await compute_payslip_summary_v2(
-            session,
-            payslip.id,
-            policy_version_id=payroll_run.policy_version_id,
-            payroll_run_id=payroll_run.id,
-            include_unapproved_run_inputs=True,
-        )
-        run_items.append(
-            PayrollRunItem(
-                payroll_run_id=payroll_run.id,
-                user_id=payslip.user_id,
-                payslip_id=payslip.id,
-                gross_pay=summary.gross_pay,
-                total_deductions=summary.total_deductions,
-                net_pay=summary.net_pay,
-                breakdown=_to_json_safe(summary.model_dump()),
-                status="READY",
-            )
-        )
-    await item_repository.create_many(run_items)
-
-    payroll_run.status = "VALIDATED"
-    payroll_run.started_at = payroll_run.started_at or utc_now()
-    return await run_repository.save(payroll_run)
-
-
-async def approve_payroll_run(
-    session: AsyncSession,
-    payroll_run_id: int,
-    approved_by: UUID | None,
-) -> PayrollRun:
-    run_repository = PayrollRunRepository(session)
-    input_repository = PayrollRunInputRepository(session)
-    payroll_run = await run_repository.get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    if payroll_run.status != "VALIDATED":
-        raise ConflictError("Only validated runs can be approved.")
-
-    run_inputs = await input_repository.list(payroll_run.id)
-    audit_repository = PayrollRunInputAuditRepository(session)
-    approval_time = utc_now()
-    for run_input in run_inputs:
-        run_input.status = "approved"
-        run_input.approved_by = approved_by
-        run_input.approved_at = approval_time
-    if run_inputs:
-        await session.commit()
-        for run_input in run_inputs:
-            await audit_repository.create(
-                PayrollRunInputAudit(
-                    payroll_run_input_id=run_input.id,
-                    action="approved",
-                    actor_id=approved_by,
-                    payload_json={
-                        "status": "approved",
-                        "approved_at": approval_time.isoformat(),
-                    },
-                )
-            )
-
-    payroll_run.status = "APPROVED"
-    return await run_repository.save(payroll_run)
-
-
-def _build_snapshot_payloads(run_inputs: list[PayrollRunInput]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    earning_items = [
-        {"name": item.item_type.name, "amount": item.amount}
-        for item in run_inputs
-        if item.item_type.category == "earning"
-    ]
-    deduction_items = [
-        {"name": item.item_type.name, "amount": item.amount}
-        for item in run_inputs
-        if item.item_type.category == "deduction"
-    ]
-    return earning_items, deduction_items
-
-
-async def post_payroll_run(session: AsyncSession, payroll_run_id: int) -> PayrollRun:
-    repository = PayrollRunRepository(session)
-    input_repository = PayrollRunInputRepository(session)
-    payslip_repository = PayslipRepository(session)
-    payroll_run = await repository.get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    if payroll_run.status != "APPROVED":
-        raise ConflictError("Only approved runs can be posted.")
-
-    run_items = await PayrollRunItemRepository(session).list(payroll_run.id)
-    compensation_repository = PayslipVariableCompensationRepository(session)
-    deduction_repository = PayslipVariableDeductionRepository(session)
-    for run_item in run_items:
-        if run_item.payslip_id is None:
-            continue
-        payslip = await payslip_repository.get_by_id(run_item.payslip_id)
-        if payslip is None:
-            continue
-        run_inputs = await input_repository.list_for_run_user(
-            payroll_run.id,
-            run_item.user_id,
-            approved_only=True,
-        )
-        earning_items, deduction_items = _build_snapshot_payloads(run_inputs)
-        await compensation_repository.replace_for_payslip(payslip.id, earning_items)
-        await deduction_repository.replace_for_payslip(payslip.id, deduction_items)
-
-    payroll_run.status = "POSTED"
-    payroll_run.posted_at = utc_now()
-    payroll_run.locked_at = utc_now()
-    return await repository.save(payroll_run)
-
-
-async def release_payroll_run(session: AsyncSession, payroll_run_id: int) -> PayrollRun:
-    repository = PayrollRunRepository(session)
-    payroll_run = await repository.get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    if payroll_run.status != "POSTED":
-        raise ConflictError("Only posted runs can be released.")
-    payroll_run.status = "RELEASED"
-    payroll_run.released_at = utc_now()
-    payroll_run.locked_at = payroll_run.locked_at or utc_now()
-    return await repository.save(payroll_run)
-
-
-async def list_payroll_run_items(session: AsyncSession, payroll_run_id: int) -> list[PayrollRunItem]:
-    run = await PayrollRunRepository(session).get_by_id(payroll_run_id)
-    if run is None:
-        raise NotFoundError("Payroll run not found.")
-    return await PayrollRunItemRepository(session).list(payroll_run_id)
 def _official_core_sources(effective_from, effective_to) -> list[dict[str, Any]]:
     return [
         {

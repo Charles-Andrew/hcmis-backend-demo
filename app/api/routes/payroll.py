@@ -8,11 +8,7 @@ from app.core.time import utc_now
 from app.models.payroll import (
     FixedCompensation,
     Mp2Enrollment,
-    PayrollItemType,
     PayrollPolicyVersion,
-    PayrollRun,
-    PayrollRunInput,
-    PayrollRunItem,
     Position,
     Payslip,
     PayslipVariableCompensation,
@@ -28,8 +24,6 @@ from app.schemas.payroll import (
     Mp2EnrollmentCreateRequest,
     Mp2EnrollmentRead,
     Mp2EnrollmentUpdateRequest,
-    PayrollItemTypeRead,
-    PayrollItemTypeUpsertRequest,
     PositionRead,
     PositionUpsertRequest,
     PayrollPolicyDetailRead,
@@ -40,12 +34,8 @@ from app.schemas.payroll import (
     PayrollPolicySeedRequest,
     PayrollPolicyVersionCreateRequest,
     PayrollPolicyVersionRead,
-    PayrollRunCreateRequest,
-    PayrollRunInputCreateRequest,
-    PayrollRunInputRead,
-    PayrollRunInputUpdateRequest,
-    PayrollRunItemRead,
-    PayrollRunRead,
+    PayrollSettingRead,
+    PayrollSettingUpdateRequest,
     PayslipCreateRequest,
     PayslipRead,
     PayslipSummaryRead,
@@ -61,32 +51,23 @@ from app.schemas.payroll import (
     ThirteenthMonthPayVariableDeductionRead,
     ThirteenthMonthPayVariableDeductionUpsertRequest,
 )
-from app.services.payroll_engine import compare_payslip_summary
+from app.services.payroll_engine import compare_payslip_summary, get_payslip_summary_v2
 from app.services.payroll_workflow import (
     activate_policy_version,
-    approve_payroll_run,
-    create_payroll_run,
     delete_policy_version,
     create_policy_version,
     get_policy_version_rules,
     get_policy_version_sources,
-    list_payroll_run_items,
-    list_payroll_runs,
     list_policy_versions,
-    post_payroll_run as post_payroll_run_workflow,
-    release_payroll_run,
     seed_ph_policy_baseline,
     seed_ph_policy_official_core,
     update_policy_version_sources,
     update_policy_version_rules,
-    validate_payroll_run,
 )
 from app.services.payroll import (
     add_payslip_variable_compensation,
     add_payslip_variable_deduction,
     add_thirteenth_month_pay_variable_deduction,
-    create_payroll_item_type,
-    create_payroll_run_input,
     create_fixed_compensation,
     create_position,
     create_mp2_enrollment,
@@ -94,33 +75,46 @@ from app.services.payroll import (
     delete_fixed_compensation,
     delete_position,
     delete_thirteenth_month_pay,
-    get_payslips,
     get_or_create_payslip,
-    get_payslip_summary,
-    list_payroll_item_types,
-    list_payroll_run_inputs,
+    get_payslips,
+    get_settings,
     list_fixed_compensations,
     list_mp2_enrollments,
     list_positions,
     list_thirteenth_month_pays,
+    end_mp2_enrollment,
     remove_payslip_variable_compensation,
     remove_payslip_variable_deduction,
     remove_thirteenth_month_pay_variable_deduction,
-    delete_payroll_run_input,
     toggle_payslip_release,
     toggle_thirteenth_month_pay_release,
-    update_payroll_item_type,
     update_fixed_compensation,
     update_fixed_compensation_users,
-    end_mp2_enrollment,
     update_mp2_enrollment,
     update_position,
     update_payslip,
-    update_payroll_run_input,
+    update_settings,
     update_thirteenth_month_pay,
 )
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
+
+
+@router.get("/settings", response_model=PayrollSettingRead)
+async def read_payroll_settings(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> object:
+    return await get_settings(session)
+
+
+@router.patch("/settings", response_model=PayrollSettingRead)
+async def patch_payroll_settings(
+    payload: PayrollSettingUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> object:
+    return await update_settings(session, payload)
 
 
 @router.get("/policy-versions", response_model=list[PayrollPolicyVersionRead])
@@ -328,38 +322,6 @@ async def remove_position(
     await delete_position(session, position_id)
 
 
-@router.get("/item-types", response_model=list[PayrollItemTypeRead])
-async def read_payroll_item_types(
-    active_only: bool = Query(default=False),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> list[PayrollItemType]:
-    return await list_payroll_item_types(session, active_only=active_only)
-
-
-@router.post(
-    "/item-types",
-    response_model=PayrollItemTypeRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def post_payroll_item_type(
-    payload: PayrollItemTypeUpsertRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollItemType:
-    return await create_payroll_item_type(session, payload)
-
-
-@router.patch("/item-types/{item_type_id}", response_model=PayrollItemTypeRead)
-async def patch_payroll_item_type(
-    item_type_id: int,
-    payload: PayrollItemTypeUpsertRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollItemType:
-    return await update_payroll_item_type(session, item_type_id, payload)
-
-
 @router.get("/fixed-compensations", response_model=list[FixedCompensationRead])
 async def read_fixed_compensations(
     month: int | None = Query(default=None),
@@ -415,118 +377,6 @@ async def remove_fixed_compensation(
     await delete_fixed_compensation(session, compensation_id)
 
 
-@router.get("/runs", response_model=list[PayrollRunRead])
-async def read_payroll_runs(
-    month: int | None = Query(default=None),
-    year: int | None = Query(default=None),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> list[PayrollRun]:
-    return await list_payroll_runs(session, month=month, year=year)
-
-
-@router.post("/runs", response_model=PayrollRunRead, status_code=status.HTTP_201_CREATED)
-async def post_payroll_run(
-    payload: PayrollRunCreateRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRun:
-    return await create_payroll_run(session, payload, created_by=current_user.id)
-
-
-@router.post("/runs/{payroll_run_id}/validate", response_model=PayrollRunRead)
-async def validate_run(
-    payroll_run_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRun:
-    return await validate_payroll_run(session, payroll_run_id)
-
-
-@router.post("/runs/{payroll_run_id}/approve", response_model=PayrollRunRead)
-async def approve_run(
-    payroll_run_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRun:
-    return await approve_payroll_run(session, payroll_run_id, approved_by=current_user.id)
-
-
-@router.post("/runs/{payroll_run_id}/post", response_model=PayrollRunRead)
-async def post_run(
-    payroll_run_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRun:
-    return await post_payroll_run_workflow(session, payroll_run_id)
-
-
-@router.post("/runs/{payroll_run_id}/release", response_model=PayrollRunRead)
-async def release_run(
-    payroll_run_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRun:
-    return await release_payroll_run(session, payroll_run_id)
-
-
-@router.get("/runs/{payroll_run_id}/items", response_model=list[PayrollRunItemRead])
-async def read_payroll_run_items(
-    payroll_run_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> list[PayrollRunItem]:
-    return await list_payroll_run_items(session, payroll_run_id)
-
-
-@router.get("/runs/{payroll_run_id}/inputs", response_model=list[PayrollRunInputRead])
-async def read_payroll_run_inputs(
-    payroll_run_id: int,
-    user_id: UUID | None = Query(default=None),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> list[PayrollRunInput]:
-    return await list_payroll_run_inputs(session, payroll_run_id, user_id=user_id)
-
-
-@router.post(
-    "/runs/{payroll_run_id}/inputs",
-    response_model=PayrollRunInputRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def post_payroll_run_input(
-    payroll_run_id: int,
-    payload: PayrollRunInputCreateRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRunInput:
-    return await create_payroll_run_input(
-        session,
-        payroll_run_id,
-        payload,
-        created_by=current_user.id,
-    )
-
-
-@router.patch("/run-inputs/{run_input_id}", response_model=PayrollRunInputRead)
-async def patch_payroll_run_input(
-    run_input_id: int,
-    payload: PayrollRunInputUpdateRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> PayrollRunInput:
-    return await update_payroll_run_input(session, run_input_id, payload, actor_id=current_user.id)
-
-
-@router.delete("/run-inputs/{run_input_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_payroll_run_input(
-    run_input_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> None:
-    await delete_payroll_run_input(session, run_input_id, actor_id=current_user.id)
-
-
 @router.get("/payslips", response_model=list[PayslipRead])
 async def read_payslips(
     user_id: UUID | None = Query(default=None),
@@ -557,7 +407,7 @@ async def read_payslip_summary(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ):
-    return await get_payslip_summary(session, payslip_id)
+    return await get_payslip_summary_v2(session, payslip_id)
 
 
 @router.get(

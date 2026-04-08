@@ -526,7 +526,27 @@ async def toggle_user_evaluation_finalized(
         if peer_count < 1:
             raise ConflictError("At least one peer evaluator is required before finalizing.")
     item.is_finalized = next_state
-    return await repository.save(item)
+    saved = await repository.save(item)
+    if next_state:
+        recipient_ids = _normalized_uuid_list(
+            [
+                evaluation.evaluator_id
+                for evaluation in saved.evaluations
+                if evaluation.evaluator_id != saved.evaluatee_id
+            ]
+        )
+        if recipient_ids:
+            evaluatee_name = _user_display_name(saved.evaluatee)
+            await create_notifications_if_possible(
+                session,
+                recipient_ids=recipient_ids,
+                content=(
+                    f"You were assigned to evaluate {evaluatee_name} "
+                    f"for Q{saved.quarter} {saved.year}."
+                ),
+                url=f"/performance-evaluations?cycle_id={saved.id}",
+            )
+    return saved
 
 
 async def assign_user_evaluation_evaluator(
@@ -560,16 +580,6 @@ async def assign_user_evaluation_evaluator(
             questionnaire_id=user_evaluation.questionnaire_id,
             content_data=_copy_questionnaire_content(user_evaluation.questionnaire),
         )
-    )
-    evaluatee_name = _user_display_name(user_evaluation.evaluatee)
-    await create_notification_if_possible(
-        session,
-        recipient_id=payload.evaluator_id,
-        content=(
-            f"You were assigned to evaluate {evaluatee_name} "
-            f"for Q{user_evaluation.quarter} {user_evaluation.year}."
-        ),
-        url=f"/performance-evaluations?cycle_id={user_evaluation.id}",
     )
     return created
 

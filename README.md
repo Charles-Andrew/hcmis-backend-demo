@@ -17,7 +17,7 @@ uv run uvicorn app.main:app --reload
 From `hcmis-backend/`:
 
 ```bash
-make db-reset
+make db-clear
 make seed-initial
 make seed-performance-questionnaires
 ```
@@ -36,6 +36,14 @@ If you are deploying a fresh production database with no users yet, bootstrap th
 BOOTSTRAP_HR_EMAIL=hr@company.com \
 BOOTSTRAP_HR_PASSWORD='choose-a-strong-password' \
 make seed-bootstrap-hr
+```
+
+To clear the database, create the first HR user, and seed the payroll policy in one shot:
+
+```bash
+BOOTSTRAP_HR_EMAIL=hr@company.com \
+BOOTSTRAP_HR_PASSWORD='choose-a-strong-password' \
+make reset-and-bootstrap
 ```
 
 Optional overrides:

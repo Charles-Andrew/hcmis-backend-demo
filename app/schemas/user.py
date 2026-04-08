@@ -49,6 +49,9 @@ class UserRead(BaseModel):
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
+    position_id: int | None = None
+    rank_level: int | None = None
+    step_number: int | None = None
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
@@ -97,6 +100,11 @@ class UserCreateRequest(BaseModel):
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
+    position_id: int | None = None
+    rank_level: int | None = None
+    step_number: int | None = None
+    assignment_effective_from: date | None = None
+    assignment_change_reason: str | None = None
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
@@ -116,6 +124,20 @@ class UserCreateRequest(BaseModel):
     def normalize_rank_value(cls, value: str | None) -> str | None:
         return normalize_rank(value)
 
+    @field_validator("rank_level")
+    @classmethod
+    def validate_rank_level(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("Rank level must be at least 1.")
+        return value
+
+    @field_validator("step_number")
+    @classmethod
+    def validate_step_number(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("Step number must be at least 1.")
+        return value
+
 
 class UserUpdateRequest(BaseModel):
     first_name: str | None = None
@@ -126,6 +148,11 @@ class UserUpdateRequest(BaseModel):
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
+    position_id: int | None = None
+    rank_level: int | None = None
+    step_number: int | None = None
+    assignment_effective_from: date | None = None
+    assignment_change_reason: str | None = None
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
@@ -145,6 +172,20 @@ class UserUpdateRequest(BaseModel):
     def normalize_rank_value(cls, value: str | None) -> str | None:
         return normalize_rank(value)
 
+    @field_validator("rank_level")
+    @classmethod
+    def validate_rank_level(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("Rank level must be at least 1.")
+        return value
+
+    @field_validator("step_number")
+    @classmethod
+    def validate_step_number(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("Step number must be at least 1.")
+        return value
+
 
 class UserBiometricUpdateRequest(BaseModel):
     biometric_uid: int | None = None
@@ -158,14 +199,8 @@ class UserProfileUpdateRequest(BaseModel):
     education: str | None = None
     civil_status: str | None = None
     religion: str | None = None
-    rank: str | None = None
     phone_number: str | None = None
     address: str | None = None
     date_of_birth: date | None = None
     date_of_hiring: date | None = None
     profile_picture_url: str | None = None
-
-    @field_validator("rank", mode="before")
-    @classmethod
-    def normalize_rank_value(cls, value: str | None) -> str | None:
-        return normalize_rank(value)

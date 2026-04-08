@@ -179,6 +179,38 @@ class HolidayUpdateRequest(BaseModel):
     is_regular: bool | None = None
 
 
+class OvertimeApproverUpsertRequest(BaseModel):
+    department_approver_id: UUID | None = None
+    director_approver_id: UUID | None = None
+    president_approver_id: UUID | None = None
+    hr_approver_id: UUID | None = None
+
+
+class OvertimeApproverRead(BaseModel):
+    id: int
+    department_id: int
+    department: DepartmentRead | None = None
+    department_approver_id: UUID | None = None
+    director_approver_id: UUID | None = None
+    president_approver_id: UUID | None = None
+    hr_approver_id: UUID | None = None
+    department_approver: UserRead | None = None
+    director_approver: UserRead | None = None
+    president_approver: UserRead | None = None
+    hr_approver: UserRead | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OvertimeApproverAssignmentRead(BaseModel):
+    approver_id: UUID | None = None
+    approver: UserRead | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OvertimeRequestRead(BaseModel):
     id: int
     user_id: UUID
@@ -198,7 +230,6 @@ class OvertimeRequestRead(BaseModel):
 
 class OvertimeRequestCreateRequest(BaseModel):
     user_id: UUID
-    approver_id: UUID
     info: str | None = None
     date: date
 

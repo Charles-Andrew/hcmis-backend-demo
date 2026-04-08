@@ -1,7 +1,7 @@
 """rework payroll statutory rule contracts
 
-Revision ID: 0019_payroll_statutory_rule_contract_rework
-Revises: 0018_payroll_policy_rule_dimensions
+Revision ID: 0019_statutory_rule_rework
+Revises: 0019_payroll_policy_sources
 Create Date: 2026-04-07 16:10:00.000000
 """
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0019_payroll_statutory_rule_contract_rework"
+revision = "0019_statutory_rule_rework"
 down_revision = "0019_payroll_policy_sources"
 branch_labels = None
 depends_on = None

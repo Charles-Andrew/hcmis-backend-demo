@@ -1,11 +1,12 @@
+from datetime import date
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
-from app.models.user import User
+from app.models.user import User, UserPositionAssignment
 
 
 class UserRepository:
@@ -15,7 +16,10 @@ class UserRepository:
     async def get_by_id(self, user_id: UUID) -> User | None:
         statement = (
             select(User)
-            .options(selectinload(User.department))
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
             .where(User.id == user_id)
         )
         result = await self.session.execute(statement)
@@ -24,7 +28,10 @@ class UserRepository:
     async def get_by_email(self, email: str) -> User | None:
         statement = (
             select(User)
-            .options(selectinload(User.department))
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
             .where(User.email == email)
         )
         result = await self.session.execute(statement)
@@ -33,7 +40,10 @@ class UserRepository:
     async def get_by_employee_number(self, employee_number: str) -> User | None:
         statement = (
             select(User)
-            .options(selectinload(User.department))
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
             .where(User.employee_number == employee_number)
         )
         result = await self.session.execute(statement)
@@ -42,7 +52,10 @@ class UserRepository:
     async def get_by_biometric_uid(self, biometric_uid: int) -> User | None:
         statement = (
             select(User)
-            .options(selectinload(User.department))
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
             .where(User.biometric_uid == biometric_uid)
         )
         result = await self.session.execute(statement)
@@ -57,8 +70,13 @@ class UserRepository:
         exclude_hr: bool = False,
         exclude_user_id: UUID | None = None,
     ) -> list[User]:
-        statement = select(User).options(selectinload(User.department)).outerjoin(
-            Department, Department.id == User.department_id
+        statement = (
+            select(User)
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
+            .outerjoin(Department, Department.id == User.department_id)
         )
         if not include_superusers:
             statement = statement.where(User.is_superuser.is_(False))
@@ -101,3 +119,90 @@ class UserRepository:
         if refreshed is None:
             return user
         return refreshed
+
+
+class UserPositionAssignmentRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def _with_relationships(self, statement):
+        return statement.options(
+            selectinload(UserPositionAssignment.user),
+            selectinload(UserPositionAssignment.position),
+        )
+
+    async def list_for_user(self, user_id: UUID) -> list[UserPositionAssignment]:
+        statement = self._with_relationships(
+            select(UserPositionAssignment).where(UserPositionAssignment.user_id == user_id)
+        ).order_by(
+            UserPositionAssignment.effective_from.desc(),
+            UserPositionAssignment.id.desc(),
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_active_for_user_on(
+        self,
+        user_id: UUID,
+        effective_date: date,
+    ) -> UserPositionAssignment | None:
+        statement = (
+            self._with_relationships(select(UserPositionAssignment))
+            .where(
+                and_(
+                    UserPositionAssignment.user_id == user_id,
+                    UserPositionAssignment.effective_from <= effective_date,
+                    or_(
+                        UserPositionAssignment.effective_to.is_(None),
+                        UserPositionAssignment.effective_to >= effective_date,
+                    ),
+                )
+            )
+            .order_by(
+                UserPositionAssignment.effective_from.desc(),
+                UserPositionAssignment.id.desc(),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_overlapping_assignments(
+        self,
+        user_id: UUID,
+        effective_from: date,
+        effective_to: date | None,
+        exclude_assignment_id: int | None = None,
+    ) -> list[UserPositionAssignment]:
+        statement = select(UserPositionAssignment).where(
+            UserPositionAssignment.user_id == user_id,
+            or_(
+                UserPositionAssignment.effective_to.is_(None),
+                UserPositionAssignment.effective_to >= effective_from,
+            ),
+        )
+        if effective_to is not None:
+            statement = statement.where(UserPositionAssignment.effective_from <= effective_to)
+        if exclude_assignment_id is not None:
+            statement = statement.where(UserPositionAssignment.id != exclude_assignment_id)
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def create(self, assignment: UserPositionAssignment) -> UserPositionAssignment:
+        self.session.add(assignment)
+        await self.session.commit()
+        result = await self.session.execute(
+            self._with_relationships(select(UserPositionAssignment)).where(
+                UserPositionAssignment.id == assignment.id
+            )
+        )
+        return result.scalar_one()
+
+    async def save(self, assignment: UserPositionAssignment) -> UserPositionAssignment:
+        await self.session.commit()
+        result = await self.session.execute(
+            self._with_relationships(select(UserPositionAssignment)).where(
+                UserPositionAssignment.id == assignment.id
+            )
+        )
+        return result.scalar_one()

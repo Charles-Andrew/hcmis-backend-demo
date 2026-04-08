@@ -8,19 +8,16 @@ from uuid import UUID
 import anyio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.time import utc_now
 from app.core.exceptions import ConflictError
-from app.models.payroll import PayrollPolicyVersion, PayrollRun, PayrollRunItem, Payslip
+from app.core.time import utc_now
+from app.models.payroll import PayrollPolicyVersion
 from app.schemas.payroll import (
-    PayrollComputationRead,
     PayrollPolicyOfficialSeedRequest,
+    PayrollPolicySourceWrite,
     PayrollPolicySourcesUpdateRequest,
     PayrollPolicyRulesUpdateRequest,
     PayrollPolicyVersionCreateRequest,
-    PayrollPolicySourceWrite,
     PolicySssBracketWrite,
-    PayrollPolicySeedRequest,
-    PayrollRunCreateRequest,
 )
 from app.services import payroll_workflow
 
@@ -143,78 +140,6 @@ class FakePolicySourceRepository:
         return shaped
 
 
-class FakeRunRepository:
-    items: dict[int, PayrollRun] = {}
-    next_id = 1
-
-    def __init__(self, session):
-        self.session = session
-
-    async def list(self, month=None, year=None):
-        values = list(self.items.values())
-        if month is not None:
-            values = [item for item in values if item.month == month]
-        if year is not None:
-            values = [item for item in values if item.year == year]
-        return values
-
-    async def get_by_id(self, payroll_run_id: int):
-        return self.items.get(payroll_run_id)
-
-    async def get_by_identity(self, month: int, year: int, period: str):
-        for item in self.items.values():
-            if item.month == month and item.year == year and item.period == period:
-                return item
-        return None
-
-    async def create(self, item: PayrollRun):
-        item.id = type(self).next_id
-        type(self).next_id += 1
-        self.items[item.id] = item
-        return item
-
-    async def save(self, item: PayrollRun):
-        self.items[item.id] = item
-        return item
-
-
-class FakeRunItemRepository:
-    items: dict[int, List[PayrollRunItem]] = {}
-
-    def __init__(self, session):
-        self.session = session
-
-    async def list(self, payroll_run_id: int):
-        return self.items.get(payroll_run_id, [])
-
-    async def clear(self, payroll_run_id: int):
-        self.items[payroll_run_id] = []
-
-    async def create_many(self, items: List[PayrollRunItem]):
-        if not items:
-            return items
-        run_id = items[0].payroll_run_id
-        self.items[run_id] = items
-        return items
-
-
-class FakePayslipRepository:
-    items: List[Payslip] = []
-
-    def __init__(self, session):
-        self.session = session
-
-    async def list(self, user_id=None, month=None, year=None, period=None, released=None):
-        data = list(self.items)
-        if month is not None:
-            data = [item for item in data if item.month == month]
-        if year is not None:
-            data = [item for item in data if item.year == year]
-        if period is not None:
-            data = [item for item in data if item.period == period]
-        return data
-
-
 def _reset():
     FakePolicyVersionRepository.items = {}
     FakePolicyVersionRepository.next_id = 1
@@ -222,88 +147,6 @@ def _reset():
     FakePolicyRuleRepository.cleared_policy_ids = []
     FakePolicyRuleRepository.rules_by_policy_id = {}
     FakePolicySourceRepository.sources_by_policy_id = {}
-    FakeRunRepository.items = {}
-    FakeRunRepository.next_id = 1
-    FakeRunItemRepository.items = {}
-    FakePayslipRepository.items = []
-
-
-def test_seed_policy_and_validate_run(monkeypatch):
-    _reset()
-    monkeypatch.setattr(
-        payroll_workflow, "PayrollPolicyVersionRepository", FakePolicyVersionRepository
-    )
-    monkeypatch.setattr(payroll_workflow, "PayrollPolicyRuleRepository", FakePolicyRuleRepository)
-    monkeypatch.setattr(payroll_workflow, "PayrollPolicySourceRepository", FakePolicySourceRepository)
-    monkeypatch.setattr(payroll_workflow, "PayrollRunRepository", FakeRunRepository)
-    monkeypatch.setattr(payroll_workflow, "PayrollRunItemRepository", FakeRunItemRepository)
-    monkeypatch.setattr(payroll_workflow, "PayslipRepository", FakePayslipRepository)
-
-    async def fake_compute_summary(_session, _payslip_id, **_kwargs):
-        return PayrollComputationRead(
-            gross_pay=Decimal("1000.00"),
-            total_deductions=Decimal("100.00"),
-            net_pay=Decimal("900.00"),
-            mandatory_deductions={"sss": Decimal("50.00")},
-            variable_deductions=Decimal("50.00"),
-            mp2_deduction=Decimal("0.00"),
-            included_in_total_deductions=True,
-            notes=[],
-        )
-
-    monkeypatch.setattr(payroll_workflow, "compute_payslip_summary_v2", fake_compute_summary)
-
-    seeded = anyio.run(
-        payroll_workflow.seed_ph_policy_baseline,
-        cast(AsyncSession, object()),
-        PayrollPolicySeedRequest(
-            version_label="BASELINE-2026",
-            effective_from=date(2026, 1, 1),
-            effective_to=None,
-            overwrite_existing=False,
-        ),
-    )
-    assert seeded.id == 1
-    assert seeded.is_active is False
-    assert FakePolicyRuleRepository.seeded_policy_ids == [1]
-
-    activated = anyio.run(
-        payroll_workflow.activate_policy_version,
-        cast(AsyncSession, object()),
-        seeded.id,
-    )
-    assert activated.is_active is True
-
-    run = anyio.run(
-        payroll_workflow.create_payroll_run,
-        cast(AsyncSession, object()),
-        PayrollRunCreateRequest(month=4, year=2026, period="2ND", policy_version_id=seeded.id),
-        UUID(int=1),
-    )
-    assert run.status == "DRAFT"
-
-    FakePayslipRepository.items = [
-        Payslip(
-            id=1,
-            user_id=UUID(int=2),
-            month=4,
-            year=2026,
-            period="2ND",
-            rank="OPS-1",
-            salary=Decimal("1000.00"),
-            released=False,
-        )
-    ]
-
-    validated = anyio.run(
-        payroll_workflow.validate_payroll_run, cast(AsyncSession, object()), run.id
-    )
-    assert validated.status == "VALIDATED"
-    run_items = anyio.run(
-        payroll_workflow.list_payroll_run_items, cast(AsyncSession, object()), run.id
-    )
-    assert len(run_items) == 1
-    assert run_items[0].net_pay == Decimal("900.00")
 
 
 def test_update_policy_rules(monkeypatch):
@@ -425,7 +268,6 @@ def test_activate_policy_version(monkeypatch):
     assert activated.id == second.id
     assert FakePolicyVersionRepository.items[first.id].is_active is False
     assert FakePolicyVersionRepository.items[second.id].is_active is True
-
 
 def test_delete_active_policy_version_rejected(monkeypatch):
     _reset()

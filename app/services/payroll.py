@@ -13,13 +13,9 @@ from app.core.time import utc_now
 from app.models.payroll import (
     FixedCompensation,
     Mp2Enrollment,
-    PayrollItemType,
     Position,
     PayrollSetting,
     Payslip,
-    PayrollRun,
-    PayrollRunInput,
-    PayrollRunInputAudit,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
     ThirteenthMonthPay,
@@ -31,10 +27,6 @@ from app.repositories.departments import DepartmentRepository
 from app.repositories.payroll import (
     FixedCompensationRepository,
     Mp2EnrollmentRepository,
-    PayrollItemTypeRepository,
-    PayrollRunInputAuditRepository,
-    PayrollRunInputRepository,
-    PayrollRunRepository,
     PositionRepository,
     PayrollSettingRepository,
     PayslipRepository,
@@ -44,15 +36,13 @@ from app.repositories.payroll import (
     ThirteenthMonthPayVariableDeductionRepository,
 )
 from app.repositories.users import UserRepository
+from app.repositories.users import UserPositionAssignmentRepository
 from app.services.notifications import create_notification_if_possible
 from app.schemas.payroll import (
     FixedCompensationUpsertRequest,
     FixedCompensationUsersRequest,
     Mp2EnrollmentCreateRequest,
     Mp2EnrollmentUpdateRequest,
-    PayrollItemTypeUpsertRequest,
-    PayrollRunInputCreateRequest,
-    PayrollRunInputUpdateRequest,
     PositionUpsertRequest,
     PayrollSettingUpdateRequest,
     PayslipCreateRequest,
@@ -125,6 +115,7 @@ async def get_settings(session: AsyncSession) -> PayrollSetting:
             basic_salary_step_multiplier=Decimal("1.0000"),
             basic_salary_steps=10,
             max_position_rank=10,
+            automatic_deduction_schedule="SECOND_CUTOFF_ONLY",
         )
         return await repository.create(settings)
     return settings
@@ -145,225 +136,6 @@ def _normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-def _is_payroll_run_editable(payroll_run: PayrollRun) -> bool:
-    return payroll_run.status in {"DRAFT", "VALIDATED"}
-
-
-async def _get_payroll_run_for_input_edit(
-    session: AsyncSession, payroll_run_id: int
-) -> PayrollRun:
-    payroll_run = await PayrollRunRepository(session).get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    if not _is_payroll_run_editable(payroll_run):
-        raise ConflictError("Only draft or validated payroll runs can be edited.")
-    return payroll_run
-
-
-async def _create_payroll_run_input_audit(
-    session: AsyncSession,
-    payroll_run_input_id: int,
-    action: str,
-    actor_id: UUID | None,
-    payload_json: dict,
-) -> PayrollRunInputAudit:
-    return await PayrollRunInputAuditRepository(session).create(
-        PayrollRunInputAudit(
-            payroll_run_input_id=payroll_run_input_id,
-            action=action,
-            actor_id=actor_id,
-            payload_json=payload_json,
-        )
-    )
-
-
-async def list_payroll_item_types(
-    session: AsyncSession,
-    active_only: bool = False,
-) -> list[PayrollItemType]:
-    return await PayrollItemTypeRepository(session).list(active_only=active_only)
-
-
-async def create_payroll_item_type(
-    session: AsyncSession,
-    payload: PayrollItemTypeUpsertRequest,
-) -> PayrollItemType:
-    repository = PayrollItemTypeRepository(session)
-    if await repository.get_by_code(payload.code) is not None:
-        raise ConflictError("Payroll item type code already exists.")
-    return await repository.create(
-        PayrollItemType(
-            code=payload.code,
-            name=payload.name,
-            category=payload.category,
-            behavior=payload.behavior,
-            taxable=payload.taxable,
-            is_active=payload.is_active,
-            display_order=payload.display_order,
-        )
-    )
-
-
-async def update_payroll_item_type(
-    session: AsyncSession,
-    item_type_id: int,
-    payload: PayrollItemTypeUpsertRequest,
-) -> PayrollItemType:
-    repository = PayrollItemTypeRepository(session)
-    item_type = await repository.get_by_id(item_type_id)
-    if item_type is None:
-        raise NotFoundError("Payroll item type not found.")
-    existing = await repository.get_by_code(payload.code)
-    if existing is not None and existing.id != item_type_id:
-        raise ConflictError("Payroll item type code already exists.")
-    item_type.code = payload.code
-    item_type.name = payload.name
-    item_type.category = payload.category
-    item_type.behavior = payload.behavior
-    item_type.taxable = payload.taxable
-    item_type.is_active = payload.is_active
-    item_type.display_order = payload.display_order
-    return await repository.save(item_type)
-
-
-async def list_payroll_run_inputs(
-    session: AsyncSession,
-    payroll_run_id: int,
-    user_id: UUID | None = None,
-) -> list[PayrollRunInput]:
-    payroll_run = await PayrollRunRepository(session).get_by_id(payroll_run_id)
-    if payroll_run is None:
-        raise NotFoundError("Payroll run not found.")
-    return await PayrollRunInputRepository(session).list(payroll_run_id, user_id=user_id)
-
-
-async def get_approved_payroll_run_inputs_for_user(
-    session: AsyncSession,
-    payroll_run_id: int,
-    user_id: UUID,
-) -> list[PayrollRunInput]:
-    return await PayrollRunInputRepository(session).list_for_run_user(
-        payroll_run_id,
-        user_id,
-        approved_only=True,
-    )
-
-
-async def create_payroll_run_input(
-    session: AsyncSession,
-    payroll_run_id: int,
-    payload: PayrollRunInputCreateRequest,
-    created_by: UUID | None,
-) -> PayrollRunInput:
-    await _get_payroll_run_for_input_edit(session, payroll_run_id)
-    if await UserRepository(session).get_by_id(payload.user_id) is None:
-        raise NotFoundError("User not found.")
-    item_type = await PayrollItemTypeRepository(session).get_by_id(payload.payroll_item_type_id)
-    if item_type is None:
-        raise NotFoundError("Payroll item type not found.")
-    if not item_type.is_active:
-        raise ConflictError("Payroll item type is inactive.")
-    run_input = await PayrollRunInputRepository(session).create(
-        PayrollRunInput(
-            payroll_run_id=payroll_run_id,
-            user_id=payload.user_id,
-            payroll_item_type_id=payload.payroll_item_type_id,
-            amount=payload.amount,
-            remarks=_normalize_optional_text(payload.remarks),
-            source="manual",
-            status="draft",
-            created_by=created_by,
-        )
-    )
-    await _create_payroll_run_input_audit(
-        session,
-        run_input.id,
-        "created",
-        created_by,
-        {
-            "amount": str(run_input.amount),
-            "payroll_item_type_id": run_input.payroll_item_type_id,
-            "remarks": run_input.remarks,
-        },
-    )
-    return run_input
-
-
-async def update_payroll_run_input(
-    session: AsyncSession,
-    run_input_id: int,
-    payload: PayrollRunInputUpdateRequest,
-    actor_id: UUID | None,
-) -> PayrollRunInput:
-    repository = PayrollRunInputRepository(session)
-    run_input = await repository.get_by_id(run_input_id)
-    if run_input is None:
-        raise NotFoundError("Payroll run input not found.")
-    await _get_payroll_run_for_input_edit(session, run_input.payroll_run_id)
-    data = payload.model_dump(exclude_unset=True)
-    if "payroll_item_type_id" in data:
-        item_type = await PayrollItemTypeRepository(session).get_by_id(data["payroll_item_type_id"])
-        if item_type is None:
-            raise NotFoundError("Payroll item type not found.")
-        if not item_type.is_active:
-            raise ConflictError("Payroll item type is inactive.")
-    if "remarks" in data:
-        data["remarks"] = _normalize_optional_text(data["remarks"])
-    before = {
-        "amount": str(run_input.amount),
-        "payroll_item_type_id": run_input.payroll_item_type_id,
-        "remarks": run_input.remarks,
-        "status": run_input.status,
-    }
-    for field_name, value in data.items():
-        setattr(run_input, field_name, value)
-    run_input.status = "draft"
-    run_input.approved_by = None
-    run_input.approved_at = None
-    saved = await repository.save(run_input)
-    await _create_payroll_run_input_audit(
-        session,
-        saved.id,
-        "updated",
-        actor_id,
-        {
-            "before": before,
-            "after": {
-                "amount": str(saved.amount),
-                "payroll_item_type_id": saved.payroll_item_type_id,
-                "remarks": saved.remarks,
-                "status": saved.status,
-            },
-        },
-    )
-    return saved
-
-
-async def delete_payroll_run_input(
-    session: AsyncSession,
-    run_input_id: int,
-    actor_id: UUID | None,
-) -> None:
-    repository = PayrollRunInputRepository(session)
-    run_input = await repository.get_by_id(run_input_id)
-    if run_input is None:
-        raise NotFoundError("Payroll run input not found.")
-    await _get_payroll_run_for_input_edit(session, run_input.payroll_run_id)
-    await _create_payroll_run_input_audit(
-        session,
-        run_input.id,
-        "deleted",
-        actor_id,
-        {
-            "amount": str(run_input.amount),
-            "payroll_item_type_id": run_input.payroll_item_type_id,
-            "remarks": run_input.remarks,
-            "status": run_input.status,
-        },
-    )
-    await repository.delete(run_input)
 
 
 def resolve_mp2_effective_date(
@@ -628,10 +400,41 @@ async def get_payslips(
     )
 
 
-async def _current_salary_for_user(session: AsyncSession, user: User) -> tuple[str | None, Decimal | None]:
-    if not user.rank or user.department_id is None:
+def _format_rank_display(position_code: str, rank_level: int, step_number: int | None) -> str:
+    if step_number is None:
+        return f"{position_code}-{rank_level}"
+    return f"{position_code}-{rank_level} - STEP {step_number}"
+
+
+async def _current_salary_for_user(
+    session: AsyncSession,
+    user: User,
+    *,
+    month: int | None = None,
+    year: int | None = None,
+    period: str | None = None,
+) -> tuple[str | None, Decimal | None]:
+    if user.department_id is None:
         return None, None
     settings = await get_settings(session)
+    effective_date = resolve_mp2_effective_date(month, year, period)
+    assignment = await UserPositionAssignmentRepository(session).get_active_for_user_on(
+        user.id,
+        effective_date,
+    )
+    if assignment is not None:
+        position = assignment.position
+        grade = position.salary_grade + max(assignment.rank_level - 1, 0)
+        base_salary = _salary_grade_amount(settings, grade)
+        if assignment.step_number is not None:
+            for _ in range(assignment.step_number):
+                base_salary *= _to_decimal(settings.basic_salary_step_multiplier)
+        return (
+            _format_rank_display(position.code, assignment.rank_level, assignment.step_number),
+            base_salary.quantize(Decimal("0.01")),
+        )
+    if not user.rank:
+        return None, None
     position_code_match = _month_period_pattern().match(user.rank)
     if position_code_match is None:
         return user.rank, None
@@ -665,6 +468,25 @@ async def _mp2_deduction_for_user(
     return Decimal("0.00")
 
 
+async def _resolve_payslip_deduction_schedule(
+    session: AsyncSession,
+    user_id: UUID,
+    month: int,
+    year: int,
+) -> str:
+    existing_payslips = await PayslipRepository(session).list(
+        user_id=user_id,
+        month=month,
+        year=year,
+    )
+    for existing_payslip in existing_payslips:
+        if existing_payslip.automatic_deduction_schedule:
+            return existing_payslip.automatic_deduction_schedule
+
+    settings = await get_settings(session)
+    return settings.automatic_deduction_schedule
+
+
 async def get_or_create_payslip(
     session: AsyncSession, payload: PayslipCreateRequest
 ) -> Payslip:
@@ -676,7 +498,13 @@ async def get_or_create_payslip(
         payload.user_id, payload.month, payload.year, payload.period
     )
     if payslip is None:
-        rank, salary = await _current_salary_for_user(session, user)
+        rank, salary = await _current_salary_for_user(
+            session,
+            user,
+            month=payload.month,
+            year=payload.year,
+            period=payload.period,
+        )
         payslip = Payslip(
             user_id=payload.user_id,
             month=payload.month,
@@ -684,10 +512,22 @@ async def get_or_create_payslip(
             period=payload.period,
             rank=rank,
             salary=salary,
+            automatic_deduction_schedule=await _resolve_payslip_deduction_schedule(
+                session,
+                payload.user_id,
+                payload.month,
+                payload.year,
+            ),
         )
         payslip = await repository.create(payslip)
     elif not payslip.released:
-        rank, salary = await _current_salary_for_user(session, user)
+        rank, salary = await _current_salary_for_user(
+            session,
+            user,
+            month=payload.month,
+            year=payload.year,
+            period=payload.period,
+        )
         payslip.rank = rank
         payslip.salary = salary
         payslip = await repository.save(payslip)

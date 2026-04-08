@@ -1,4 +1,4 @@
-app = "hcmis-backend-prod"
+app = "hcmis-backend"
 primary_region = "sin"
 
 [build]

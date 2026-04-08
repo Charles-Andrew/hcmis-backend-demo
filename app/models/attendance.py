@@ -188,6 +188,39 @@ class DeletedAttendanceRecord(Base):
     )
 
 
+class OvertimeApprover(Base):
+    __tablename__ = "overtime_approvers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    department_id: Mapped[int] = mapped_column(
+        ForeignKey("departments.id"), unique=True, index=True, nullable=False
+    )
+    department_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    director_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    president_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    hr_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    department = relationship("Department", back_populates="overtime_approver")
+    department_approver = relationship("User", foreign_keys=[department_approver_id])
+    director_approver = relationship("User", foreign_keys=[director_approver_id])
+    president_approver = relationship("User", foreign_keys=[president_approver_id])
+    hr_approver = relationship("User", foreign_keys=[hr_approver_id])
+
+
 class OvertimeRequest(Base):
     __tablename__ = "overtime_requests"
 
