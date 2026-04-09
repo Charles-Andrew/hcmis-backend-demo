@@ -46,6 +46,12 @@ BOOTSTRAP_HR_PASSWORD='choose-a-strong-password' \
 make reset-and-bootstrap
 ```
 
+If you need to run the same full reset/bootstrap flow on Fly from your local machine:
+
+```bash
+fly ssh console -a <fly-app-name> -C "sh -lc 'cd /app && uv run python -m app.scripts.clear_db_data && BOOTSTRAP_HR_EMAIL=<bootstrap-hr-email> BOOTSTRAP_HR_PASSWORD=<bootstrap-hr-password> uv run python -m app.scripts.bootstrap_hr_account && uv run python -m app.scripts.seed_payroll_policy_official_ph && uv run python -m app.scripts.import_performance_questionnaires'"
+```
+
 Optional overrides:
 
 - `BOOTSTRAP_HR_FIRST_NAME` and `BOOTSTRAP_HR_LAST_NAME`
