@@ -2,6 +2,7 @@ import anyio
 from typing import cast
 from uuid import UUID
 
+from fastapi import Request
 from app.api.routes import auth as auth_routes
 from app.core.security import decode_access_token
 from app.core.time import utc_now
@@ -44,7 +45,11 @@ async def _register(payload: dict[str, str]) -> UserRead:
 
 
 async def _login(payload: dict[str, str]) -> AuthResponse:
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
     return await auth_routes.login(
+        Request({"type": "http", "headers": []}, receive),
         AuthLoginRequest(**payload),
         session=cast(AsyncSession, object()),
     )

@@ -1,6 +1,8 @@
+import logging
+import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from app.schemas.auth import (
 from app.schemas.user import UserRead, UserWithCapabilitiesRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -78,12 +81,22 @@ async def register(
 
 @router.post("/login", response_model=AuthResponse)
 async def login(
+    request: Request,
     payload: AuthLoginRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> AuthResponse:
+    request_id = request.headers.get("x-request-id", "")
+    started = time.perf_counter()
+    logger.info("auth_login_start request_id=%s", request_id)
+
     repository = UserRepository(session)
     user = await repository.get_by_email(payload.email.lower())
     if user is None or not verify_password(payload.password, user.password_hash):
+        logger.warning(
+            "auth_login_invalid_credentials request_id=%s duration_ms=%d",
+            request_id,
+            int((time.perf_counter() - started) * 1000),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
@@ -93,6 +106,12 @@ async def login(
         and user.temporary_password_expires_at is not None
         and user.temporary_password_expires_at < datetime.now(UTC)
     ):
+        logger.warning(
+            "auth_login_temporary_password_expired request_id=%s user_id=%s duration_ms=%d",
+            request_id,
+            str(user.id),
+            int((time.perf_counter() - started) * 1000),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Temporary password has expired. Please contact HR for reset.",
@@ -101,6 +120,12 @@ async def login(
     access_token = create_access_token(subject=str(user.id))
     validated_user = UserWithCapabilitiesRead.model_validate(user).model_copy(
         update={"capabilities": resolve_user_capabilities(user)}
+    )
+    logger.info(
+        "auth_login_success request_id=%s user_id=%s duration_ms=%d",
+        request_id,
+        str(user.id),
+        int((time.perf_counter() - started) * 1000),
     )
     return AuthResponse(
         access_token=access_token,
