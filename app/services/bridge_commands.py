@@ -14,7 +14,6 @@ from app.schemas.attendance import (
     BridgeCommandRead,
     BridgeCommandSyncUsersCreateRequest,
 )
-from app.services.notifications import create_notification_if_possible
 
 
 def _to_read(command: BridgeCommand) -> BridgeCommandRead:
@@ -99,19 +98,6 @@ async def ack_command(
     command.executed_at = payload.executed_at or utc_now()
     command.updated_at = utc_now()
     command = await repository.save(command)
-    if command.created_by_user_id is not None:
-        await create_notification_if_possible(
-            session,
-            recipient_id=command.created_by_user_id,
-            content=(
-                f"Biometric command '{command.command_type}' on device "
-                f"{command.device_id} ({command.site_code}) is now {command.status}."
-            ),
-            url=(
-                f"/hr/users/biometric-sync?site_code={command.site_code}"
-                f"&device_id={command.device_id}"
-            ),
-        )
     return _to_read(command)
 
 
