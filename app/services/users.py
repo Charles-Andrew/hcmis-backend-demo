@@ -88,6 +88,37 @@ async def _derive_rank_label(
     return f"{position.code}-{rank_level} - STEP {step_number}"
 
 
+async def _validate_user_approver_assignments(
+    *,
+    user_repository: UserRepository,
+    target_user_id: UUID | None,
+    level_1_approver_id: UUID | None,
+    level_2_approver_id: UUID | None,
+) -> tuple[UUID | None, UUID | None]:
+    if (
+        level_1_approver_id is not None
+        and level_2_approver_id is not None
+        and level_1_approver_id == level_2_approver_id
+    ):
+        raise ConflictError("Level 1 and Level 2 approvers must be different users.")
+
+    for approver_id, label in (
+        (level_1_approver_id, "Level 1 approver"),
+        (level_2_approver_id, "Level 2 approver"),
+    ):
+        if approver_id is None:
+            continue
+        approver = await user_repository.get_by_id(approver_id)
+        if approver is None:
+            raise NotFoundError(f"{label} user not found.")
+        if not approver.is_active:
+            raise ConflictError(f"{label} must be an active user.")
+        if target_user_id is not None and approver.id == target_user_id:
+            raise ConflictError(f"{label} cannot be the same as the selected user.")
+
+    return level_1_approver_id, level_2_approver_id
+
+
 async def _upsert_current_position_assignment(
     session: AsyncSession,
     user: User,
@@ -182,6 +213,13 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         if department is None:
             raise NotFoundError("Department not found.")
 
+    level_1_approver_id, level_2_approver_id = await _validate_user_approver_assignments(
+        user_repository=user_repository,
+        target_user_id=None,
+        level_1_approver_id=payload.level_1_approver_id,
+        level_2_approver_id=payload.level_2_approver_id,
+    )
+
     position_id, rank_level, step_number = await _validate_position_assignment(
         session,
         payload.position_id,
@@ -208,6 +246,8 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
         biometric_uid=payload.biometric_uid,
         role=payload.role,
         department_id=payload.department_id,
+        level_1_approver_id=level_1_approver_id,
+        level_2_approver_id=level_2_approver_id,
         phone_number=payload.phone_number,
         address=payload.address,
         date_of_birth=payload.date_of_birth,
@@ -261,6 +301,16 @@ async def update_user(
 
     data = payload.model_dump(exclude_unset=True)
     department_id = data.pop("department_id", None) if "department_id" in data else None
+    level_1_approver_id = (
+        data.pop("level_1_approver_id", user.level_1_approver_id)
+        if "level_1_approver_id" in data
+        else user.level_1_approver_id
+    )
+    level_2_approver_id = (
+        data.pop("level_2_approver_id", user.level_2_approver_id)
+        if "level_2_approver_id" in data
+        else user.level_2_approver_id
+    )
     position_id = data.pop("position_id", user.position_id) if "position_id" in data else user.position_id
     rank_level = data.pop("rank_level", user.rank_level) if "rank_level" in data else user.rank_level
     step_number = data.pop("step_number", user.step_number) if "step_number" in data else user.step_number
@@ -275,6 +325,13 @@ async def update_user(
                 raise NotFoundError("Department not found.")
             user.department_id = department.id
 
+    level_1_approver_id, level_2_approver_id = await _validate_user_approver_assignments(
+        user_repository=user_repository,
+        target_user_id=user.id,
+        level_1_approver_id=level_1_approver_id,
+        level_2_approver_id=level_2_approver_id,
+    )
+
     position_id, rank_level, step_number = await _validate_position_assignment(
         session,
         position_id,
@@ -284,6 +341,8 @@ async def update_user(
 
     for field_name, value in data.items():
         setattr(user, field_name, value)
+    user.level_1_approver_id = level_1_approver_id
+    user.level_2_approver_id = level_2_approver_id
 
     assignment_changed = (
         position_id != user.position_id

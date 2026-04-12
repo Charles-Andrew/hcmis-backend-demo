@@ -6,38 +6,12 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-from app.schemas.department import DepartmentRead
 from app.schemas.user import UserRead
 
 
 class LeaveTypeOptionRead(BaseModel):
     value: str
     label: str
-
-
-class LeaveApproverUpsertRequest(BaseModel):
-    department_approver_id: UUID | None = None
-    director_approver_id: UUID | None = None
-    president_approver_id: UUID | None = None
-    hr_approver_id: UUID | None = None
-
-
-class LeaveApproverRead(BaseModel):
-    id: int
-    department_id: int
-    department: DepartmentRead | None = None
-    department_approver_id: UUID | None = None
-    director_approver_id: UUID | None = None
-    president_approver_id: UUID | None = None
-    hr_approver_id: UUID | None = None
-    department_approver: UserRead | None = None
-    director_approver: UserRead | None = None
-    president_approver: UserRead | None = None
-    hr_approver: UserRead | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class LeaveCreditUpsertRequest(BaseModel):
@@ -89,6 +63,8 @@ class LeaveRequestRead(BaseModel):
     second_approver_id: UUID | None = None
     second_approver_status: str | None = None
     second_approver_at: datetime | None = None
+    escalated_to_backup_at: datetime | None = None
+    escalated_to_backup_by_id: UUID | None = None
     status: str
     user: UserRead | None = None
     first_approver: UserRead | None = None

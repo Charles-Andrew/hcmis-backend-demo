@@ -15,13 +15,11 @@ from app.models.attendance import (
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
-    OvertimeApprover,
     OvertimeRequest,
     OvertimeRequestApprover,
     ShiftTemplate,
     ShiftSwapRequest,
 )
-from app.models.department import Department
 from app.models.user import User
 
 
@@ -438,59 +436,6 @@ class OvertimeRepository:
 
     async def delete(self, overtime: OvertimeRequest) -> None:
         await self.session.delete(overtime)
-        await self.session.commit()
-
-
-class OvertimeApproverRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list(self) -> list[OvertimeApprover]:
-        statement = (
-            select(OvertimeApprover)
-            .options(
-                selectinload(OvertimeApprover.department),
-                selectinload(OvertimeApprover.department_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.director_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.president_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.hr_approver).selectinload(User.department),
-            )
-            .join(Department, Department.id == OvertimeApprover.department_id)
-            .order_by(Department.name)
-        )
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def get_by_department_id(self, department_id: int) -> OvertimeApprover | None:
-        statement = (
-            select(OvertimeApprover)
-            .options(
-                selectinload(OvertimeApprover.department),
-                selectinload(OvertimeApprover.department_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.director_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.president_approver).selectinload(User.department),
-                selectinload(OvertimeApprover.hr_approver).selectinload(User.department),
-            )
-            .where(OvertimeApprover.department_id == department_id)
-        )
-        result = await self.session.execute(statement)
-        return result.scalar_one_or_none()
-
-    async def create(self, overtime_approver: OvertimeApprover) -> OvertimeApprover:
-        self.session.add(overtime_approver)
-        await self.session.commit()
-        await self.session.refresh(overtime_approver)
-        hydrated = await self.get_by_department_id(overtime_approver.department_id)
-        return hydrated or overtime_approver
-
-    async def save(self, overtime_approver: OvertimeApprover) -> OvertimeApprover:
-        await self.session.commit()
-        await self.session.refresh(overtime_approver)
-        hydrated = await self.get_by_department_id(overtime_approver.department_id)
-        return hydrated or overtime_approver
-
-    async def delete(self, overtime_approver: OvertimeApprover) -> None:
-        await self.session.delete(overtime_approver)
         await self.session.commit()
 
 

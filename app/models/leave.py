@@ -22,39 +22,6 @@ class LeaveRequestStatus(str, PyEnum):
     CANCELLED = "CANCELLED"
 
 
-class LeaveApprover(Base):
-    __tablename__ = "leave_approvers"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    department_id: Mapped[int] = mapped_column(
-        ForeignKey("departments.id"), unique=True, index=True, nullable=False
-    )
-    department_approver_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
-    director_approver_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
-    president_approver_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
-    hr_approver_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
-    )
-
-    department = relationship("Department", back_populates="leave_approver")
-    department_approver = relationship("User", foreign_keys=[department_approver_id])
-    director_approver = relationship("User", foreign_keys=[director_approver_id])
-    president_approver = relationship("User", foreign_keys=[president_approver_id])
-    hr_approver = relationship("User", foreign_keys=[hr_approver_id])
-
-
 class LeaveCredit(Base):
     __tablename__ = "leave_credits"
 
@@ -103,6 +70,12 @@ class LeaveRequest(Base):
     second_approver_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    escalated_to_backup_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    escalated_to_backup_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), default=LeaveRequestStatus.PENDING.value, nullable=False, index=True
     )
@@ -116,6 +89,7 @@ class LeaveRequest(Base):
     user = relationship("User", back_populates="leave_requests", foreign_keys=[user_id])
     first_approver = relationship("User", foreign_keys=[first_approver_id])
     second_approver = relationship("User", foreign_keys=[second_approver_id])
+    escalated_to_backup_by = relationship("User", foreign_keys=[escalated_to_backup_by_id])
     approver_pool = relationship(
         "LeaveRequestApprover",
         back_populates="leave_request",

@@ -12,7 +12,6 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.core.config import settings
 from app.db.base import Base
 from app.models.department import Department  # noqa: F401
-from app.models.leave import LeaveApprover  # noqa: F401
 from app.models.leave import LeaveCredit  # noqa: F401
 from app.models.leave import LeaveRequest  # noqa: F401
 from app.models.chat import Message  # noqa: F401

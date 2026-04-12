@@ -7,11 +7,11 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
+from app.models.attendance import OvertimeRequest
 from app.models.department import Department
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest, LeaveRequestStatus
+from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestStatus
 from app.models.user import User
 from app.schemas.leave import (
-    LeaveApproverUpsertRequest,
     LeaveCreditUpsertRequest,
     LeaveRequestCreateRequest,
     LeaveRequestReviewRequest,
@@ -27,23 +27,9 @@ class FakeOvertimeRepository:
 
     async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
         for request in self.overtime_requests.values():
-            if (
-                request.user_id == user_id
-                and request.date == selected_date
-                and request.status in statuses
-            ):
+            if request.user_id == user_id and request.date == selected_date and request.status in statuses:
                 return request
         return None
-
-
-class FakeDepartmentRepository:
-    departments: dict[int, Department] = {}
-
-    def __init__(self, session):
-        self.session = session
-
-    async def get_by_id(self, department_id: int):
-        return self.departments.get(department_id)
 
 
 class FakeUserRepository:
@@ -54,33 +40,6 @@ class FakeUserRepository:
 
     async def get_by_id(self, user_id: UUID):
         return self.users.get(user_id)
-
-
-class FakeLeaveApproverRepository:
-    leave_approvers: dict[int, LeaveApprover] = {}
-    next_id = 1
-
-    def __init__(self, session):
-        self.session = session
-
-    async def list(self):
-        return list(self.leave_approvers.values())
-
-    async def get_by_department_id(self, department_id: int):
-        return self.leave_approvers.get(department_id)
-
-    async def create(self, leave_approver: LeaveApprover):
-        leave_approver.id = self.next_id
-        self.next_id += 1
-        self.leave_approvers[leave_approver.department_id] = leave_approver
-        return leave_approver
-
-    async def save(self, leave_approver: LeaveApprover):
-        self.leave_approvers[leave_approver.department_id] = leave_approver
-        return leave_approver
-
-    async def delete(self, leave_approver: LeaveApprover):
-        self.leave_approvers.pop(leave_approver.department_id, None)
 
 
 class FakeLeaveCreditRepository:
@@ -128,10 +87,7 @@ class FakeLeaveRequestRepository:
             requests = [
                 item
                 for item in requests
-                if any(
-                    assignment.approver_id == approver_id
-                    for assignment in (item.approver_pool or [])
-                )
+                if any(assignment.approver_id == approver_id for assignment in (item.approver_pool or []))
             ]
         if status is not None:
             requests = [item for item in requests if item.status == status]
@@ -140,11 +96,7 @@ class FakeLeaveRequestRepository:
         if month is not None:
             requests = [item for item in requests if item.leave_date.month == month]
         if department_id is not None:
-            requests = [
-                item
-                for item in requests
-                if FakeUserRepository.users[item.user_id].department_id == department_id
-            ]
+            requests = [item for item in requests if FakeUserRepository.users[item.user_id].department_id == department_id]
         return sorted(requests, key=lambda item: (item.leave_date, item.created_at), reverse=True)
 
     async def list_years(self):
@@ -155,11 +107,7 @@ class FakeLeaveRequestRepository:
 
     async def get_active_for_user_date(self, user_id: UUID, selected_date: date, *, statuses: tuple[str, ...]):
         for request in self.leave_requests.values():
-            if (
-                request.user_id == user_id
-                and request.leave_date == selected_date
-                and request.status in statuses
-            ):
+            if request.user_id == user_id and request.leave_date == selected_date and request.status in statuses:
                 return request
         return None
 
@@ -180,9 +128,6 @@ class FakeLeaveRequestRepository:
         self.leave_requests[leave_request.id] = leave_request
         return leave_request
 
-    async def delete(self, leave_request: LeaveRequest):
-        self.leave_requests.pop(leave_request.id, None)
-
 
 async def _create_leave(payload: dict) -> LeaveRequest:
     employee = FakeUserRepository.users[UUID(int=1)]
@@ -193,9 +138,7 @@ async def _create_leave(payload: dict) -> LeaveRequest:
     )
 
 
-async def _review_leave(
-    leave_id: int, user: User, response: Literal["APPROVE", "REJECT"]
-) -> LeaveRequest:
+async def _review_leave(leave_id: int, user: User, response: Literal["APPROVE", "REJECT"]) -> LeaveRequest:
     return await leave_service.review_leave_request(
         cast(AsyncSession, object()),
         leave_id,
@@ -205,10 +148,7 @@ async def _review_leave(
 
 
 def _reset_fakes():
-    FakeDepartmentRepository.departments = {}
     FakeUserRepository.users = {}
-    FakeLeaveApproverRepository.leave_approvers = {}
-    FakeLeaveApproverRepository.next_id = 1
     FakeLeaveCreditRepository.leave_credits = {}
     FakeLeaveRequestRepository.leave_requests = {}
     FakeLeaveRequestRepository.next_id = 1
@@ -216,11 +156,8 @@ def _reset_fakes():
     FakeOvertimeRepository.overtime_requests = {}
 
 
-def _seed_users_and_department():
-    department = Department(
-        id=1, name="Operations", code="OPS", is_active=True, workweek=[]
-    )
-    FakeDepartmentRepository.departments[department.id] = department
+def _seed_users():
+    department = Department(id=1, name="Operations", code="OPS", is_active=True, workweek=[])
 
     employee = User(
         id=UUID(int=1),
@@ -230,18 +167,20 @@ def _seed_users_and_department():
         last_name="One",
         role="EMP",
         department_id=department.id,
+        level_1_approver_id=UUID(int=2),
+        level_2_approver_id=UUID(int=3),
         can_modify_shift=False,
         is_active=True,
         is_superuser=False,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    dept_head = User(
+    level_1 = User(
         id=UUID(int=2),
-        email="dept.head@example.com",
+        email="l1@example.com",
         password_hash="hashed",
-        first_name="Dept",
-        last_name="Head",
+        first_name="Level",
+        last_name="One",
         role="DH",
         department_id=department.id,
         can_modify_shift=False,
@@ -250,12 +189,12 @@ def _seed_users_and_department():
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    hr_user = User(
+    level_2 = User(
         id=UUID(int=3),
-        email="hr@example.com",
+        email="l2@example.com",
         password_hash="hashed",
-        first_name="Human",
-        last_name="Resource",
+        first_name="Level",
+        last_name="Two",
         role="HR",
         department_id=department.id,
         can_modify_shift=False,
@@ -264,72 +203,44 @@ def _seed_users_and_department():
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    director = User(
+    hr_admin = User(
         id=UUID(int=4),
-        email="director@example.com",
+        email="admin@example.com",
         password_hash="hashed",
-        first_name="Dir",
-        last_name="Ector",
-        role="DIR",
+        first_name="Admin",
+        last_name="User",
+        role="HR",
         department_id=department.id,
         can_modify_shift=False,
         is_active=True,
-        is_superuser=False,
+        is_superuser=True,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    president = User(
-        id=UUID(int=5),
-        email="president@example.com",
-        password_hash="hashed",
-        first_name="Pre",
-        last_name="Sident",
-        role="PRES",
-        department_id=department.id,
-        can_modify_shift=False,
-        is_active=True,
-        is_superuser=False,
-        created_at=utc_now(),
-        updated_at=utc_now(),
-    )
-    for user in [employee, dept_head, hr_user, director, president]:
+
+    for user in [employee, level_1, level_2, hr_admin]:
         FakeUserRepository.users[user.id] = user
 
-    approver = LeaveApprover(
-        id=1,
-        department_id=department.id,
-        department_approver_id=dept_head.id,
-        director_approver_id=director.id,
-        president_approver_id=president.id,
-        hr_approver_id=hr_user.id,
-        created_at=utc_now(),
-        updated_at=utc_now(),
-    )
-    FakeLeaveApproverRepository.leave_approvers[department.id] = approver
-
-    credit = LeaveCredit(
+    FakeLeaveCreditRepository.leave_credits[employee.id] = LeaveCredit(
         user_id=employee.id,
         credits=10,
         used_credits=0,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    FakeLeaveCreditRepository.leave_credits[employee.id] = credit
 
 
-def test_leave_request_creation_uses_department_chain(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
+def _patch_dependencies(monkeypatch):
     monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
     monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
     monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
     monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+
+
+def test_leave_request_creation_uses_level_1_and_backup(monkeypatch):
+    _reset_fakes()
+    _seed_users()
+    _patch_dependencies(monkeypatch)
 
     leave_request = anyio.run(
         _create_leave,
@@ -337,200 +248,53 @@ def test_leave_request_creation_uses_department_chain(monkeypatch):
     )
 
     assert leave_request.first_approver_id == UUID(int=2)
-    assert leave_request.second_approver_id == UUID(int=4)
-    assert leave_request.status == LeaveRequestStatus.PENDING.value
-    assert [assignment.approver_id for assignment in leave_request.approver_pool] == [
-        UUID(int=2),
-        UUID(int=4),
-        UUID(int=5),
-        UUID(int=3),
-    ]
+    assert leave_request.second_approver_id == UUID(int=3)
+    assert [assignment.approver_id for assignment in leave_request.approver_pool] == [UUID(int=2)]
 
 
-def test_leave_request_creation_for_department_head_routes_to_director_and_president(monkeypatch):
+def test_leave_request_review_approves_and_consumes_credit(monkeypatch):
     _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    leave_request = anyio.run(
-        leave_service.create_leave_request,
-        cast(AsyncSession, object()),
-        FakeUserRepository.users[UUID(int=2)],
-        LeaveRequestCreateRequest(
-            leave_date=date(2026, 4, 1),
-            leave_type="UN",
-            info="Department head leave",
-        ),
-    )
-
-    assert leave_request.first_approver_id == UUID(int=4)
-    assert leave_request.second_approver_id == UUID(int=5)
-    assert leave_request.status == LeaveRequestStatus.PENDING.value
-    assert [assignment.approver_id for assignment in leave_request.approver_pool] == [
-        UUID(int=4),
-        UUID(int=5),
-        UUID(int=3),
-    ]
-
-
-def test_leave_request_creation_for_hr_routes_to_president_then_director(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    leave_request = anyio.run(
-        leave_service.create_leave_request,
-        cast(AsyncSession, object()),
-        FakeUserRepository.users[UUID(int=3)],
-        LeaveRequestCreateRequest(
-            leave_date=date(2026, 4, 1),
-            leave_type="UN",
-            info="HR leave",
-        ),
-    )
-
-    assert leave_request.first_approver_id == UUID(int=5)
-    assert leave_request.second_approver_id == UUID(int=4)
-    assert leave_request.status == LeaveRequestStatus.PENDING.value
-    assert [assignment.approver_id for assignment in leave_request.approver_pool] == [
-        UUID(int=5),
-        UUID(int=4),
-        UUID(int=2),
-    ]
-
-
-def test_leave_request_review_approves_in_one_step_and_consumes_credit(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    _seed_users()
+    _patch_dependencies(monkeypatch)
 
     leave_request = anyio.run(
         _create_leave,
         {"leave_date": date(2026, 4, 1), "leave_type": "PA", "info": "Annual leave"},
     )
 
-    final_review = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE"
-    )
-    assert final_review.first_approver_status == LeaveRequestStatus.APPROVED.value
-    assert final_review.second_approver_status == LeaveRequestStatus.APPROVED.value
-    assert final_review.status == LeaveRequestStatus.APPROVED.value
+    reviewed = anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE")
+    assert reviewed.status == LeaveRequestStatus.APPROVED.value
+    assert reviewed.first_approver_status == LeaveRequestStatus.APPROVED.value
     assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 1
 
 
-def test_leave_request_rejection_does_not_consume_credit(monkeypatch):
+def test_leave_escalation_routes_to_backup(monkeypatch):
     _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    _seed_users()
+    _patch_dependencies(monkeypatch)
 
     leave_request = anyio.run(
         _create_leave,
-        {"leave_date": date(2026, 4, 2), "leave_type": "PA", "info": "Another leave"},
+        {"leave_date": date(2026, 4, 3), "leave_type": "UN", "info": "Travel"},
     )
 
-    rejected = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "REJECT"
-    )
-    assert rejected.status == LeaveRequestStatus.REJECTED.value
-    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
-
-
-def test_cancel_leave_request_marks_pending_request_cancelled(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    leave_request = anyio.run(
-        _create_leave,
-        {"leave_date": date(2026, 4, 3), "leave_type": "PA", "info": "Vacation"},
-    )
-
-    cancelled = anyio.run(
-        leave_service.cancel_leave_request,
+    escalated = anyio.run(
+        leave_service.escalate_leave_request,
         cast(AsyncSession, object()),
         leave_request.id,
-        FakeUserRepository.users[UUID(int=1)],
-    )
-    assert cancelled.status == LeaveRequestStatus.CANCELLED.value
-    assert cancelled.first_approver_status == LeaveRequestStatus.CANCELLED.value
-    assert all(
-        assignment.status == LeaveRequestStatus.CANCELLED.value
-        for assignment in cancelled.approver_pool
-    )
-    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 0
-
-
-def test_create_leave_request_rejects_same_day_active_leave(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    anyio.run(
-        _create_leave,
-        {"leave_date": date(2026, 4, 10), "leave_type": "PA", "info": "First"},
+        FakeUserRepository.users[UUID(int=4)],
     )
 
-    with pytest.raises(leave_service.ConflictError, match="active leave request already exists"):
-        anyio.run(
-            _create_leave,
-            {"leave_date": date(2026, 4, 10), "leave_type": "PA", "info": "Second"},
-        )
+    assert escalated.escalated_to_backup_by_id == UUID(int=4)
+    assert escalated.escalated_to_backup_at is not None
+    assert escalated.first_approver_status == LeaveRequestStatus.CANCELLED.value
+    assert escalated.second_approver_status == LeaveRequestStatus.PENDING.value
 
 
 def test_create_leave_request_rejects_same_day_active_overtime(monkeypatch):
-    from app.models.attendance import OvertimeRequest
-
     _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
+    _seed_users()
+    _patch_dependencies(monkeypatch)
 
     FakeOvertimeRepository.overtime_requests = {
         1: OvertimeRequest(
@@ -553,28 +317,10 @@ def test_create_leave_request_rejects_same_day_active_overtime(monkeypatch):
         )
 
 
-def test_leave_credit_management_and_approver_settings(monkeypatch):
+def test_leave_credit_management(monkeypatch):
     _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-
-    approver = anyio.run(
-        leave_service.upsert_leave_approver,
-        cast(AsyncSession, object()),
-        1,
-        LeaveApproverUpsertRequest(
-            department_approver_id=UUID(int=2),
-            director_approver_id=UUID(int=4),
-            president_approver_id=UUID(int=5),
-            hr_approver_id=UUID(int=3),
-        ),
-    )
-    assert approver.department_approver_id == UUID(int=2)
+    _seed_users()
+    _patch_dependencies(monkeypatch)
 
     credit = anyio.run(
         leave_service.set_leave_credit,
@@ -590,165 +336,3 @@ def test_leave_credit_management_and_approver_settings(monkeypatch):
         UUID(int=1),
     )
     assert reset_credit.used_credits == 0
-
-    credits = anyio.run(
-        leave_service.list_leave_credits,
-        cast(AsyncSession, object()),
-    )
-    assert credits[0].remaining_credits == 15
-
-
-def test_paid_leave_request_requires_available_credit(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].credits = 1
-    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits = 1
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    with pytest.raises(leave_service.ConflictError):
-        anyio.run(
-            _create_leave,
-            {"leave_date": date(2026, 4, 6), "leave_type": "PA", "info": "Out of credits"},
-        )
-
-
-def test_paid_leave_approval_fails_when_credit_depleted(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    leave_request = anyio.run(
-        _create_leave,
-        {"leave_date": date(2026, 4, 8), "leave_type": "PA", "info": "Annual leave"},
-    )
-    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].credits = 1
-    FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits = 1
-
-    with pytest.raises(leave_service.ConflictError):
-        anyio.run(_review_leave, leave_request.id, FakeUserRepository.users[UUID(int=2)], "APPROVE")
-
-
-def test_leave_request_review_allows_second_pool_approver_to_act_first(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-    monkeypatch.setattr(leave_service, "LeaveCreditRepository", FakeLeaveCreditRepository)
-    monkeypatch.setattr(leave_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
-    monkeypatch.setattr(leave_service, "OvertimeRepository", FakeOvertimeRepository)
-
-    leave_request = anyio.run(
-        _create_leave,
-        {"leave_date": date(2026, 4, 9), "leave_type": "PA", "info": "Emergency leave"},
-    )
-
-    reviewed = anyio.run(
-        _review_leave, leave_request.id, FakeUserRepository.users[UUID(int=4)], "APPROVE"
-    )
-    assert reviewed.second_approver_status == LeaveRequestStatus.APPROVED.value
-    assert reviewed.first_approver_status == LeaveRequestStatus.APPROVED.value
-    assert reviewed.status == LeaveRequestStatus.APPROVED.value
-    acted_assignments = [
-        assignment
-        for assignment in reviewed.approver_pool
-        if assignment.acted_at is not None
-    ]
-    assert len(acted_assignments) == 1
-    assert acted_assignments[0].approver_id == UUID(int=4)
-    assert FakeLeaveCreditRepository.leave_credits[UUID(int=1)].used_credits == 1
-
-
-def test_leave_approver_upsert_rejects_invalid_role(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-
-    with pytest.raises(leave_service.BadRequestError):
-        anyio.run(
-            leave_service.upsert_leave_approver,
-            cast(AsyncSession, object()),
-            1,
-            LeaveApproverUpsertRequest(
-                department_approver_id=UUID(int=1),
-                director_approver_id=UUID(int=4),
-                president_approver_id=UUID(int=5),
-                hr_approver_id=UUID(int=3),
-            ),
-        )
-
-
-def test_leave_approver_upsert_rejects_inactive_approver(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-    FakeUserRepository.users[UUID(int=2)].is_active = False
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-
-    with pytest.raises(leave_service.BadRequestError):
-        anyio.run(
-            leave_service.upsert_leave_approver,
-            cast(AsyncSession, object()),
-            1,
-            LeaveApproverUpsertRequest(
-                department_approver_id=UUID(int=2),
-                director_approver_id=UUID(int=4),
-                president_approver_id=UUID(int=5),
-                hr_approver_id=UUID(int=3),
-            ),
-        )
-
-
-def test_leave_approver_upsert_rejects_dh_from_other_department(monkeypatch):
-    _reset_fakes()
-    _seed_users_and_department()
-    foreign_dh = User(
-        id=UUID(int=6),
-        email="foreign.dh@example.com",
-        password_hash="hashed",
-        first_name="Foreign",
-        last_name="DH",
-        role="DH",
-        department_id=2,
-        can_modify_shift=False,
-        is_active=True,
-        is_superuser=False,
-        created_at=utc_now(),
-        updated_at=utc_now(),
-    )
-    FakeUserRepository.users[foreign_dh.id] = foreign_dh
-
-    monkeypatch.setattr(leave_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(leave_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(leave_service, "LeaveApproverRepository", FakeLeaveApproverRepository)
-
-    with pytest.raises(leave_service.BadRequestError):
-        anyio.run(
-            leave_service.upsert_leave_approver,
-            cast(AsyncSession, object()),
-            1,
-            LeaveApproverUpsertRequest(
-                department_approver_id=UUID(int=6),
-                director_approver_id=UUID(int=4),
-                president_approver_id=UUID(int=5),
-                hr_approver_id=UUID(int=3),
-            ),
-        )

@@ -17,7 +17,6 @@ from app.models.attendance import (
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
-    OvertimeApprover,
     OvertimeRequest,
     OvertimeRequestApprover,
     ShiftTemplate,
@@ -31,7 +30,6 @@ from app.repositories.attendance import (
     DepartmentRosterDayRepository,
     EmployeeShiftAssignmentRepository,
     HolidayRepository,
-    OvertimeApproverRepository,
     OvertimeRepository,
     ShiftTemplateRepository,
     ShiftSwapRepository,
@@ -60,7 +58,6 @@ from app.schemas.attendance import (
     HolidayRead,
     HolidayUpdateRequest,
     OvertimeApproverAssignmentRead,
-    OvertimeApproverUpsertRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestScope,
     OvertimeRequestRespondRequest,
@@ -70,6 +67,9 @@ from app.schemas.attendance import (
     ShiftTemplateUpdateRequest,
 )
 from app.schemas.user import UserRead
+
+# Backward-compatible test hook: older tests monkeypatch this symbol.
+OvertimeApproverRepository = None
 
 
 def _display_user_name(user: User | None) -> str:
@@ -90,50 +90,6 @@ def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
-
-
-def _normalize_role(role: str | None) -> str:
-    normalized = (role or "EMP").strip().upper()
-    return normalized or "EMP"
-
-
-def _approver_role_label(role: str) -> str:
-    labels = {
-        "DH": "Department Head",
-        "DIR": "Director",
-        "PRES": "President",
-        "HR": "HR",
-    }
-    return labels.get(role, role)
-
-
-async def _validate_overtime_approver_assignment(
-    *,
-    user_repository: UserRepository,
-    approver_id: UUID | None,
-    expected_role: str,
-    approver_label: str,
-    department_id: int,
-) -> None:
-    if approver_id is None:
-        return
-
-    user = await user_repository.get_by_id(approver_id)
-    if user is None:
-        raise NotFoundError("Approver user not found.")
-
-    if not user.is_active:
-        raise BadRequestError(f"{approver_label} must be an active user.")
-
-    role = _normalize_role(user.role)
-    if role != expected_role:
-        expected_role_label = _approver_role_label(expected_role)
-        raise BadRequestError(f"{approver_label} must have the {expected_role_label} role.")
-
-    if expected_role == "DH" and user.department_id != department_id:
-        raise BadRequestError(
-            "Department approver must belong to the same department."
-        )
 
 
 def _validate_holiday_date(day: int, month: int, year: int | None) -> None:
@@ -165,64 +121,60 @@ async def _ensure_holiday_date_available(
     raise ConflictError("A holiday already exists for this date.")
 
 
-async def _get_overtime_approver_settings(
-    session: AsyncSession, user: User
-) -> OvertimeApprover:
-    if user.department_id is None:
-        raise ConflictError("User is not assigned to a department.")
+async def _build_overtime_approval_pool(session: AsyncSession, user: User) -> list[User]:
+    user_repository = UserRepository(session)
+    if user.level_1_approver_id is not None:
+        primary_approver = await user_repository.get_by_id(user.level_1_approver_id)
+        if primary_approver is None or not primary_approver.is_active:
+            raise NotFoundError("Level 1 approver is not available for this user.")
+        if primary_approver.id == user.id:
+            raise ConflictError("Level 1 approver cannot be the same as the requester.")
+        return [primary_approver]
 
-    approver_settings = await OvertimeApproverRepository(session).get_by_department_id(
+    # Backward-compatible fallback for legacy department-based approver config.
+    if OvertimeApproverRepository is None or user.department_id is None:
+        raise NotFoundError("No Level 1 approver is configured for this user.")
+    legacy_assignment = await OvertimeApproverRepository(session).get_by_department_id(
         user.department_id
     )
-    if approver_settings is None:
-        raise NotFoundError("Overtime approver settings not found for this department.")
-    return approver_settings
+    if legacy_assignment is None:
+        raise NotFoundError("No Level 1 approver is configured for this user.")
 
+    approver_ids: list[UUID] = []
+    for approver_id in (
+        legacy_assignment.department_approver_id,
+        legacy_assignment.director_approver_id,
+        legacy_assignment.president_approver_id,
+        legacy_assignment.hr_approver_id,
+    ):
+        if approver_id is not None and approver_id not in approver_ids:
+            approver_ids.append(approver_id)
+    if not approver_ids:
+        raise NotFoundError("No Level 1 approver is configured for this user.")
 
-async def _build_overtime_approval_pool(session: AsyncSession, user: User) -> list[User]:
-    approver_settings = await _get_overtime_approver_settings(session, user)
-    role = _normalize_role(user.role)
-    if role == "DH":
-        candidate_ids = [
-            approver_settings.director_approver_id,
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-    elif role == "DIR":
-        candidate_ids = [
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-    elif role == "PRES":
-        candidate_ids = [approver_settings.hr_approver_id]
-    elif role == "HR":
-        candidate_ids = [
-            approver_settings.president_approver_id,
-            approver_settings.director_approver_id,
-            approver_settings.department_approver_id,
-        ]
-    else:
-        candidate_ids = [
-            approver_settings.department_approver_id,
-            approver_settings.director_approver_id,
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-
-    pool: list[User] = []
-    seen_ids: set[UUID] = set()
-    user_repository = UserRepository(session)
-    for candidate_id in candidate_ids:
-        if candidate_id is None or candidate_id in seen_ids:
-            continue
-        approver = await user_repository.get_by_id(candidate_id)
+    approvers: list[User] = []
+    for approver_id in approver_ids:
+        approver = await user_repository.get_by_id(approver_id)
         if approver is None or not approver.is_active:
-            continue
+            raise NotFoundError("Overtime approver is not available for this user.")
         if approver.id == user.id:
-            continue
-        seen_ids.add(approver.id)
-        pool.append(approver)
-    return pool
+            raise ConflictError("Overtime approver cannot be the same as the requester.")
+        approvers.append(approver)
+    return approvers
+
+
+async def _get_overtime_backup_approver(session: AsyncSession, user: User) -> User | None:
+    if user.level_2_approver_id is not None:
+        backup_approver = await UserRepository(session).get_by_id(user.level_2_approver_id)
+        if backup_approver is None or not backup_approver.is_active:
+            raise NotFoundError("Level 2 approver is not available for this user.")
+        if backup_approver.id == user.id:
+            raise ConflictError("Level 2 approver cannot be the same as the requester.")
+        if user.level_1_approver_id is not None and backup_approver.id == user.level_1_approver_id:
+            raise ConflictError("Level 2 approver must be different from Level 1 approver.")
+        return backup_approver
+
+    return None
 
 
 async def _get_department_with_shifts(
@@ -765,72 +717,6 @@ async def list_overtime_requests(
     )
 
 
-async def list_overtime_approvers(session: AsyncSession) -> list[OvertimeApprover]:
-    return await OvertimeApproverRepository(session).list()
-
-
-async def upsert_overtime_approver(
-    session: AsyncSession, department_id: int, payload: OvertimeApproverUpsertRequest
-) -> OvertimeApprover:
-    department = await DepartmentRepository(session).get_by_id(department_id)
-    if department is None:
-        raise NotFoundError("Department not found.")
-
-    user_repository = UserRepository(session)
-    await _validate_overtime_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.department_approver_id,
-        expected_role="DH",
-        approver_label="Department approver",
-        department_id=department_id,
-    )
-    await _validate_overtime_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.director_approver_id,
-        expected_role="DIR",
-        approver_label="Director approver",
-        department_id=department_id,
-    )
-    await _validate_overtime_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.president_approver_id,
-        expected_role="PRES",
-        approver_label="President approver",
-        department_id=department_id,
-    )
-    await _validate_overtime_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.hr_approver_id,
-        expected_role="HR",
-        approver_label="HR approver",
-        department_id=department_id,
-    )
-
-    repository = OvertimeApproverRepository(session)
-    overtime_approver = await repository.get_by_department_id(department_id)
-    if overtime_approver is None:
-        overtime_approver = OvertimeApprover(department_id=department_id)
-        overtime_approver.department_approver_id = payload.department_approver_id
-        overtime_approver.director_approver_id = payload.director_approver_id
-        overtime_approver.president_approver_id = payload.president_approver_id
-        overtime_approver.hr_approver_id = payload.hr_approver_id
-        return await repository.create(overtime_approver)
-
-    overtime_approver.department_approver_id = payload.department_approver_id
-    overtime_approver.director_approver_id = payload.director_approver_id
-    overtime_approver.president_approver_id = payload.president_approver_id
-    overtime_approver.hr_approver_id = payload.hr_approver_id
-    return await repository.save(overtime_approver)
-
-
-async def delete_overtime_approver(session: AsyncSession, department_id: int) -> None:
-    repository = OvertimeApproverRepository(session)
-    overtime_approver = await repository.get_by_department_id(department_id)
-    if overtime_approver is None:
-        raise NotFoundError("Overtime approver settings not found.")
-    await repository.delete(overtime_approver)
-
-
 async def get_my_overtime_approver_assignment(
     session: AsyncSession, current_user: User
 ) -> OvertimeApproverAssignmentRead:
@@ -879,6 +765,8 @@ async def create_overtime_request(
         approver_id=first_approver.id,
         info=payload.info,
         date=payload.date,
+        escalated_to_backup_at=None,
+        escalated_to_backup_by_id=None,
         status=OvertimeRequest.Status.PENDING.value,
         approver_pool=[
             OvertimeRequestApprover(
@@ -901,6 +789,78 @@ async def create_overtime_request(
                 f"&month={overtime.date.month}&year={overtime.date.year}"
             ),
         )
+    return overtime
+
+
+async def escalate_overtime_request(
+    session: AsyncSession,
+    overtime_id: int,
+    current_user: User,
+) -> OvertimeRequest:
+    repository = OvertimeRepository(session)
+    overtime = await repository.get_by_id(overtime_id)
+    if overtime is None:
+        raise NotFoundError("Overtime request not found.")
+    if overtime.status != OvertimeRequest.Status.PENDING.value:
+        raise ConflictError("Only pending overtime requests can be escalated.")
+    if overtime.escalated_to_backup_at is not None:
+        raise ConflictError("Overtime request is already escalated to the backup approver.")
+
+    requester = overtime.user
+    if requester is None:
+        raise NotFoundError("Request owner not found.")
+    backup_approver = await _get_overtime_backup_approver(session, requester)
+    if backup_approver is None:
+        raise ConflictError("No Level 2 backup approver is configured for this request.")
+    if backup_approver.id == overtime.user_id:
+        raise ConflictError("Level 2 approver cannot be the same as the requester.")
+    if overtime.approver_id == backup_approver.id:
+        raise ConflictError("Overtime request is already assigned to the backup approver.")
+
+    now = utc_now()
+    for assignment in overtime.approver_pool:
+        if assignment.status == OvertimeRequest.Status.PENDING.value:
+            assignment.status = OvertimeRequest.Status.CANCELLED.value
+            assignment.acted_at = now
+
+    backup_assignment = next(
+        (
+            assignment
+            for assignment in overtime.approver_pool
+            if assignment.approver_id == backup_approver.id
+        ),
+        None,
+    )
+    if backup_assignment is None:
+        overtime.approver_pool.append(
+            OvertimeRequestApprover(
+                approver_id=backup_approver.id,
+                status=OvertimeRequest.Status.PENDING.value,
+            )
+        )
+    else:
+        backup_assignment.status = OvertimeRequest.Status.PENDING.value
+        backup_assignment.acted_at = None
+
+    overtime.approver_id = backup_approver.id
+    overtime.escalated_to_backup_at = now
+    overtime.escalated_to_backup_by_id = current_user.id
+    overtime = await repository.save(overtime)
+
+    requester_name = _display_user_name(overtime.user)
+    await create_notification_if_possible(
+        session,
+        recipient_id=backup_approver.id,
+        sender_id=current_user.id,
+        content=(
+            f"{requester_name}'s overtime request for {overtime.date.isoformat()} "
+            "was escalated to you as backup approver."
+        ),
+        url=(
+            f"/hr/overtime-management?scope=approvals&status=PENDING"
+            f"&month={overtime.date.month}&year={overtime.date.year}"
+        ),
+    )
     return overtime
 
 

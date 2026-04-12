@@ -193,31 +193,6 @@ class HolidayUpdateRequest(BaseModel):
         return self
 
 
-class OvertimeApproverUpsertRequest(BaseModel):
-    department_approver_id: UUID | None = None
-    director_approver_id: UUID | None = None
-    president_approver_id: UUID | None = None
-    hr_approver_id: UUID | None = None
-
-
-class OvertimeApproverRead(BaseModel):
-    id: int
-    department_id: int
-    department: DepartmentRead | None = None
-    department_approver_id: UUID | None = None
-    director_approver_id: UUID | None = None
-    president_approver_id: UUID | None = None
-    hr_approver_id: UUID | None = None
-    department_approver: UserRead | None = None
-    director_approver: UserRead | None = None
-    president_approver: UserRead | None = None
-    hr_approver: UserRead | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class OvertimeApproverAssignmentRead(BaseModel):
     approver_id: UUID | None = None
     approver: UserRead | None = None
@@ -244,6 +219,8 @@ class OvertimeRequestRead(BaseModel):
     approver_id: UUID
     info: str | None = None
     date: date
+    escalated_to_backup_at: datetime | None = None
+    escalated_to_backup_by_id: UUID | None = None
     status: str
     user_name: str | None = None
     user_email: str | None = None

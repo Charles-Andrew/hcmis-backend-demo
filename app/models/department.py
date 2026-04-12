@@ -24,12 +24,6 @@ class Department(Base):
     )
 
     users = relationship("User", back_populates="department")
-    leave_approver = relationship(
-        "LeaveApprover", back_populates="department", uselist=False
-    )
-    overtime_approver = relationship(
-        "OvertimeApprover", back_populates="department", uselist=False
-    )
     shift_templates = relationship(
         "ShiftTemplate", secondary="department_shifts", back_populates="departments"
     )

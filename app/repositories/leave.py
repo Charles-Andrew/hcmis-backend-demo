@@ -10,61 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest, LeaveRequestApprover
+from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestApprover
 from app.models.user import User
-
-
-class LeaveApproverRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def list(self) -> List[LeaveApprover]:
-        statement = (
-            select(LeaveApprover)
-            .options(
-                selectinload(LeaveApprover.department),
-                selectinload(LeaveApprover.department_approver).selectinload(User.department),
-                selectinload(LeaveApprover.director_approver).selectinload(User.department),
-                selectinload(LeaveApprover.president_approver).selectinload(User.department),
-                selectinload(LeaveApprover.hr_approver).selectinload(User.department),
-            )
-            .join(Department, Department.id == LeaveApprover.department_id)
-            .order_by(Department.name)
-        )
-        result = await self.session.execute(statement)
-        return list(result.scalars().all())
-
-    async def get_by_department_id(self, department_id: int) -> LeaveApprover | None:
-        statement = (
-            select(LeaveApprover)
-            .options(
-                selectinload(LeaveApprover.department),
-                selectinload(LeaveApprover.department_approver).selectinload(User.department),
-                selectinload(LeaveApprover.director_approver).selectinload(User.department),
-                selectinload(LeaveApprover.president_approver).selectinload(User.department),
-                selectinload(LeaveApprover.hr_approver).selectinload(User.department),
-            )
-            .where(LeaveApprover.department_id == department_id)
-        )
-        result = await self.session.execute(statement)
-        return result.scalar_one_or_none()
-
-    async def create(self, leave_approver: LeaveApprover) -> LeaveApprover:
-        self.session.add(leave_approver)
-        await self.session.commit()
-        await self.session.refresh(leave_approver)
-        hydrated = await self.get_by_department_id(leave_approver.department_id)
-        return hydrated or leave_approver
-
-    async def save(self, leave_approver: LeaveApprover) -> LeaveApprover:
-        await self.session.commit()
-        await self.session.refresh(leave_approver)
-        hydrated = await self.get_by_department_id(leave_approver.department_id)
-        return hydrated or leave_approver
-
-    async def delete(self, leave_approver: LeaveApprover) -> None:
-        await self.session.delete(leave_approver)
-        await self.session.commit()
 
 
 class LeaveCreditRepository:

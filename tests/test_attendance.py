@@ -1,19 +1,19 @@
 import anyio
 import pytest
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.time import utc_now
 from app.models.attendance import (
     AttendanceRecord,
     DepartmentRosterDay,
     EmployeeShiftAssignment,
     Holiday,
-    OvertimeApprover,
     OvertimeRequest,
     ShiftTemplate,
     ShiftSwapRequest,
@@ -27,7 +27,6 @@ from app.schemas.attendance import (
     AttendanceSummaryRead,
     DepartmentScheduleUpdateRequest,
     HolidayCreateRequest,
-    OvertimeApproverUpsertRequest,
     OvertimeRequestCreateRequest,
     OvertimeRequestRespondRequest,
     ShiftTemplateCreateRequest,
@@ -35,6 +34,18 @@ from app.schemas.attendance import (
     ShiftSwapRequestRespondRequest,
 )
 from app.services import attendance as attendance_service
+
+
+@dataclass
+class OvertimeApprover:
+    id: int
+    department_id: int
+    department_approver_id: UUID | None
+    director_approver_id: UUID | None
+    president_approver_id: UUID | None
+    hr_approver_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class FakeUserRepository:
@@ -1393,158 +1404,12 @@ def test_update_holiday_rejects_conflicting_date(monkeypatch):
         raise AssertionError("Expected ConflictError when moving holiday onto recurring date.")
 
 
-def test_overtime_approver_settings_can_be_managed(monkeypatch):
-    department = _make_department(1)
-    department_head = _make_user(UUID(int=2), department=department, role="DH")
-    hr_user = _make_user(UUID(int=3), department=department, role="HR")
-    FakeDepartmentRepository.departments = {department.id: department}
-    FakeUserRepository.users = {
-        department_head.id: department_head,
-        hr_user.id: hr_user,
-    }
-
-    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(
-        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
-    )
-
-    approver = anyio.run(
-        attendance_service.upsert_overtime_approver,
-        cast(AsyncSession, object()),
-        department.id,
-        OvertimeApproverUpsertRequest(
-          department_approver_id=department_head.id,
-          director_approver_id=None,
-          president_approver_id=None,
-          hr_approver_id=hr_user.id,
-        ),
-    )
-
-    assert approver.department_approver_id == department_head.id
-    assert approver.hr_approver_id == hr_user.id
-
-
-def test_overtime_approver_upsert_rejects_invalid_role(monkeypatch):
-    department = _make_department(1)
-    employee = _make_user(UUID(int=1), department=department, role="EMP")
-    director = _make_user(UUID(int=2), department=department, role="DIR")
-    president = _make_user(UUID(int=3), department=department, role="PRES")
-    hr_user = _make_user(UUID(int=4), department=department, role="HR")
-    FakeDepartmentRepository.departments = {department.id: department}
-    FakeUserRepository.users = {
-        employee.id: employee,
-        director.id: director,
-        president.id: president,
-        hr_user.id: hr_user,
-    }
-
-    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(
-        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
-    )
-
-    try:
-        anyio.run(
-            attendance_service.upsert_overtime_approver,
-            cast(AsyncSession, object()),
-            department.id,
-            OvertimeApproverUpsertRequest(
-                department_approver_id=employee.id,
-                director_approver_id=director.id,
-                president_approver_id=president.id,
-                hr_approver_id=hr_user.id,
-            ),
-        )
-    except BadRequestError as exc:
-        assert exc.detail == "Department approver must have the Department Head role."
-    else:
-        raise AssertionError("Expected BadRequestError")
-
-
-def test_overtime_approver_upsert_rejects_inactive_approver(monkeypatch):
-    department = _make_department(1)
-    department_head = _make_user(UUID(int=2), department=department, role="DH")
-    hr_user = _make_user(UUID(int=3), department=department, role="HR")
-    hr_user.is_active = False
-    FakeDepartmentRepository.departments = {department.id: department}
-    FakeUserRepository.users = {
-        department_head.id: department_head,
-        hr_user.id: hr_user,
-    }
-
-    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(
-        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
-    )
-
-    try:
-        anyio.run(
-            attendance_service.upsert_overtime_approver,
-            cast(AsyncSession, object()),
-            department.id,
-            OvertimeApproverUpsertRequest(
-                department_approver_id=department_head.id,
-                director_approver_id=None,
-                president_approver_id=None,
-                hr_approver_id=hr_user.id,
-            ),
-        )
-    except BadRequestError as exc:
-        assert exc.detail == "HR approver must be an active user."
-    else:
-        raise AssertionError("Expected BadRequestError")
-
-
-def test_overtime_approver_upsert_rejects_dh_from_other_department(monkeypatch):
-    department = _make_department(1)
-    other_department = _make_department(2, "IT")
-    department_head = _make_user(UUID(int=2), department=other_department, role="DH")
-    hr_user = _make_user(UUID(int=3), department=department, role="HR")
-    FakeDepartmentRepository.departments = {
-        department.id: department,
-        other_department.id: other_department,
-    }
-    FakeUserRepository.users = {
-        department_head.id: department_head,
-        hr_user.id: hr_user,
-    }
-
-    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
-    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(
-        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
-    )
-
-    try:
-        anyio.run(
-            attendance_service.upsert_overtime_approver,
-            cast(AsyncSession, object()),
-            department.id,
-            OvertimeApproverUpsertRequest(
-                department_approver_id=department_head.id,
-                director_approver_id=None,
-                president_approver_id=None,
-                hr_approver_id=hr_user.id,
-            ),
-        )
-    except BadRequestError as exc:
-        assert exc.detail == "Department approver must belong to the same department."
-    else:
-        raise AssertionError("Expected BadRequestError")
-
-
 def test_create_overtime_fails_without_configured_approver(monkeypatch):
     department = _make_department(1)
     user = _make_user(UUID(int=1), department=department)
     FakeUserRepository.users = {user.id: user}
 
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(
-        attendance_service, "OvertimeApproverRepository", FakeOvertimeApproverRepository
-    )
     monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
     monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
 
@@ -1556,7 +1421,7 @@ def test_create_overtime_fails_without_configured_approver(monkeypatch):
             ),
         )
     except NotFoundError as exc:
-        assert str(exc) == "Overtime approver settings not found for this department."
+        assert str(exc) == "No Level 1 approver is configured for this user."
     else:
         raise AssertionError("Expected overtime creation to fail without approver settings.")
 

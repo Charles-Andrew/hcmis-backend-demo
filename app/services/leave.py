@@ -3,10 +3,9 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.capabilities import is_staff_user
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError, PermissionDeniedError
+from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.time import utc_now
 from app.models.leave import (
-    LeaveApprover,
     LeaveCredit,
     LeaveRequest,
     LeaveRequestApprover,
@@ -16,20 +15,13 @@ from app.models.leave import (
 from app.models.attendance import OvertimeRequest
 from app.repositories.attendance import OvertimeRepository
 from app.models.user import User
-from app.repositories.departments import DepartmentRepository
 from app.repositories.leave import (
-    LeaveApproverRepository,
     LeaveCreditRepository,
     LeaveRequestRepository,
 )
 from app.repositories.users import UserRepository
 from app.services.notifications import create_notification
-from app.schemas.leave import (
-    LeaveApproverUpsertRequest,
-    LeaveCreditUpsertRequest,
-    LeaveRequestCreateRequest,
-    LeaveRequestReviewRequest,
-)
+from app.schemas.leave import LeaveCreditUpsertRequest, LeaveRequestCreateRequest, LeaveRequestReviewRequest
 
 
 def list_leave_types() -> list[dict[str, str]]:
@@ -42,62 +34,6 @@ def list_leave_types() -> list[dict[str, str]]:
     ]
 
 
-def _normalize_approval_chain(
-    first_approver_id: UUID | None, second_approver_id: UUID | None
-) -> tuple[UUID | None, UUID | None]:
-    chain: list[UUID] = []
-    for approver_id in (first_approver_id, second_approver_id):
-        if approver_id is not None and approver_id not in chain:
-            chain.append(approver_id)
-    first = chain[0] if chain else None
-    second = chain[1] if len(chain) > 1 else None
-    return first, second
-
-
-def _normalize_role(role: str | None) -> str:
-    normalized = (role or "EMP").strip().upper()
-    return normalized or "EMP"
-
-
-def _approver_role_label(role: str) -> str:
-    labels = {
-        "DH": "Department Head",
-        "DIR": "Director",
-        "PRES": "President",
-        "HR": "HR",
-    }
-    return labels.get(role, role)
-
-
-async def _validate_leave_approver_assignment(
-    *,
-    user_repository: UserRepository,
-    approver_id: UUID | None,
-    expected_role: str,
-    approver_label: str,
-    department_id: int,
-) -> None:
-    if approver_id is None:
-        return
-
-    user = await user_repository.get_by_id(approver_id)
-    if user is None:
-        raise NotFoundError("Approver user not found.")
-
-    if not user.is_active:
-        raise BadRequestError(f"{approver_label} must be an active user.")
-
-    role = _normalize_role(user.role)
-    if role != expected_role:
-        expected_role_label = _approver_role_label(expected_role)
-        raise BadRequestError(f"{approver_label} must have the {expected_role_label} role.")
-
-    if expected_role == "DH" and user.department_id != department_id:
-        raise BadRequestError(
-            "Department approver must belong to the same department."
-        )
-
-
 async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
     repository = LeaveCreditRepository(session)
     leave_credit = await repository.get_by_user_id(user_id)
@@ -107,97 +43,31 @@ async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCre
     return leave_credit
 
 
-async def _get_approval_chain(
-    session: AsyncSession, user: User
-) -> tuple[UUID | None, UUID | None]:
-    if user.department_id is None:
-        raise ConflictError("User is not assigned to a department.")
-
-    approver_settings = await LeaveApproverRepository(session).get_by_department_id(
-        user.department_id
-    )
-    if approver_settings is None:
-        raise NotFoundError("Leave approver settings not found for this department.")
-
-    role = (user.role or "EMP").upper()
-    if role == "DH":
-        chain = (
-            approver_settings.director_approver_id,
-            approver_settings.hr_approver_id,
-        )
-    elif role == "DIR":
-        chain = (
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        )
-    elif role == "PRES":
-        chain = (approver_settings.hr_approver_id, None)
-    else:
-        chain = (
-            approver_settings.department_approver_id,
-            approver_settings.hr_approver_id,
-        )
-
-    first_approver_id, second_approver_id = _normalize_approval_chain(*chain)
-    if first_approver_id is None:
-        raise NotFoundError("No leave approver is configured for this user.")
-    return first_approver_id, second_approver_id
-
-
 async def _get_approval_pool(session: AsyncSession, user: User) -> list[UUID]:
-    if user.department_id is None:
-        raise ConflictError("User is not assigned to a department.")
-
-    approver_settings = await LeaveApproverRepository(session).get_by_department_id(
-        user.department_id
-    )
-    if approver_settings is None:
-        raise NotFoundError("Leave approver settings not found for this department.")
-
-    role = _normalize_role(user.role)
-    if role == "DH":
-        candidate_ids = [
-            approver_settings.director_approver_id,
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-    elif role == "DIR":
-        candidate_ids = [
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-    elif role == "PRES":
-        candidate_ids = [approver_settings.hr_approver_id]
-    elif role == "HR":
-        candidate_ids = [
-            approver_settings.president_approver_id,
-            approver_settings.director_approver_id,
-            approver_settings.department_approver_id,
-        ]
-    else:
-        candidate_ids = [
-            approver_settings.department_approver_id,
-            approver_settings.director_approver_id,
-            approver_settings.president_approver_id,
-            approver_settings.hr_approver_id,
-        ]
-
-    pool: list[UUID] = []
+    if user.level_1_approver_id is None:
+        raise NotFoundError("No Level 1 approver is configured for this user.")
     user_repository = UserRepository(session)
-    for candidate_id in candidate_ids:
-        if candidate_id is None or candidate_id in pool:
-            continue
-        approver = await user_repository.get_by_id(candidate_id)
-        if approver is None or not approver.is_active:
-            continue
-        if approver.id == user.id:
-            continue
-        pool.append(approver.id)
+    primary_approver = await user_repository.get_by_id(user.level_1_approver_id)
+    if primary_approver is None or not primary_approver.is_active:
+        raise NotFoundError("Level 1 approver is not available for this user.")
+    if primary_approver.id == user.id:
+        raise ConflictError("Level 1 approver cannot be the same as the requester.")
+    return [primary_approver.id]
 
-    if not pool:
-        raise NotFoundError("No eligible leave approver is configured for this user.")
 
-    return pool
+async def _get_backup_approver_id(session: AsyncSession, user: User) -> UUID | None:
+    if user.level_2_approver_id is not None:
+        user_repository = UserRepository(session)
+        backup = await user_repository.get_by_id(user.level_2_approver_id)
+        if backup is None or not backup.is_active:
+            raise NotFoundError("Level 2 approver is not available for this user.")
+        if backup.id == user.id:
+            raise ConflictError("Level 2 approver cannot be the same as the requester.")
+        if user.level_1_approver_id is not None and backup.id == user.level_1_approver_id:
+            raise ConflictError("Level 2 approver must be different from Level 1 approver.")
+        return backup.id
+
+    return None
 
 
 def _leave_type_label(leave_type: str) -> str:
@@ -301,7 +171,7 @@ async def create_leave_request(
 
     approval_pool = await _get_approval_pool(session, current_user)
     first_approver_id = approval_pool[0]
-    second_approver_id = approval_pool[1] if len(approval_pool) > 1 else None
+    second_approver_id = await _get_backup_approver_id(session, current_user)
     leave_request = LeaveRequest(
         user_id=current_user.id,
         leave_date=payload.leave_date,
@@ -413,10 +283,16 @@ async def review_leave_request(
         if assignment.status == LeaveRequestStatus.PENDING.value:
             assignment.status = final_status
 
-    if leave_request.first_approver_id is not None:
+    if (
+        leave_request.first_approver_id is not None
+        and leave_request.first_approver_status == LeaveRequestStatus.PENDING.value
+    ):
         leave_request.first_approver_status = final_status
         leave_request.first_approver_at = now
-    if leave_request.second_approver_id is not None:
+    if (
+        leave_request.second_approver_id is not None
+        and leave_request.second_approver_status == LeaveRequestStatus.PENDING.value
+    ):
         leave_request.second_approver_status = final_status
         leave_request.second_approver_at = now
     leave_request.status = final_status
@@ -457,73 +333,82 @@ async def review_leave_request(
     return leave_request
 
 
-async def list_leave_approvers(session: AsyncSession) -> list[LeaveApprover]:
-    return await LeaveApproverRepository(session).list()
-
-
-async def upsert_leave_approver(
+async def escalate_leave_request(
     session: AsyncSession,
-    department_id: int,
-    payload: LeaveApproverUpsertRequest,
-) -> LeaveApprover:
-    department = await DepartmentRepository(session).get_by_id(department_id)
-    if department is None:
-        raise NotFoundError("Department not found.")
+    leave_id: int,
+    current_user: User,
+) -> LeaveRequest:
+    repository = LeaveRequestRepository(session)
+    leave_request = await repository.get_by_id(leave_id)
+    if leave_request is None:
+        raise NotFoundError("Leave request not found.")
+    if leave_request.status != LeaveRequestStatus.PENDING.value:
+        raise ConflictError("Only pending leave requests can be escalated.")
+    if leave_request.escalated_to_backup_at is not None:
+        raise ConflictError("Leave request is already escalated to the backup approver.")
+    if leave_request.second_approver_id is None:
+        raise ConflictError("No Level 2 backup approver is configured for this request.")
+    if leave_request.user_id == leave_request.second_approver_id:
+        raise ConflictError("Level 2 approver cannot be the same as the requester.")
 
     user_repository = UserRepository(session)
-    await _validate_leave_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.department_approver_id,
-        expected_role="DH",
-        approver_label="Department approver",
-        department_id=department_id,
+    backup_approver = await user_repository.get_by_id(leave_request.second_approver_id)
+    if backup_approver is None or not backup_approver.is_active:
+        raise ConflictError("Level 2 backup approver is not available.")
+
+    if leave_request.first_approver_status != LeaveRequestStatus.PENDING.value:
+        raise ConflictError("Level 1 approver has already acted on this request.")
+
+    now = utc_now()
+    if leave_request.first_approver_id is not None:
+        for assignment in leave_request.approver_pool:
+            if (
+                assignment.approver_id == leave_request.first_approver_id
+                and assignment.status == LeaveRequestStatus.PENDING.value
+            ):
+                assignment.status = LeaveRequestStatus.CANCELLED.value
+                assignment.acted_at = now
+
+    leave_request.first_approver_status = LeaveRequestStatus.CANCELLED.value
+    leave_request.first_approver_at = now
+    leave_request.second_approver_status = LeaveRequestStatus.PENDING.value
+    leave_request.second_approver_at = None
+    leave_request.escalated_to_backup_at = now
+    leave_request.escalated_to_backup_by_id = current_user.id
+
+    backup_assignment = next(
+        (
+            assignment
+            for assignment in leave_request.approver_pool
+            if assignment.approver_id == leave_request.second_approver_id
+        ),
+        None,
     )
-    await _validate_leave_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.director_approver_id,
-        expected_role="DIR",
-        approver_label="Director approver",
-        department_id=department_id,
+    if backup_assignment is None:
+        leave_request.approver_pool.append(
+            LeaveRequestApprover(
+                approver_id=leave_request.second_approver_id,
+                status=LeaveRequestStatus.PENDING.value,
+            )
+        )
+    else:
+        backup_assignment.status = LeaveRequestStatus.PENDING.value
+        backup_assignment.acted_at = None
+
+    leave_request = await repository.save(leave_request)
+    requester_name = _user_display_name(leave_request.user) if leave_request.user else "A user"
+    leave_type = _leave_type_label(leave_request.leave_type)
+    await _notify_user(
+        session,
+        recipient_id=leave_request.second_approver_id,
+        sender_id=current_user.id,
+        content=(
+            f"{requester_name}'s {leave_type} leave request for "
+            f"{leave_request.leave_date.isoformat()} was escalated to you as backup approver."
+        ),
+        url=f"/leave/inbox?leave_id={leave_request.id}",
     )
-    await _validate_leave_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.president_approver_id,
-        expected_role="PRES",
-        approver_label="President approver",
-        department_id=department_id,
-    )
-    await _validate_leave_approver_assignment(
-        user_repository=user_repository,
-        approver_id=payload.hr_approver_id,
-        expected_role="HR",
-        approver_label="HR approver",
-        department_id=department_id,
-    )
-
-    repository = LeaveApproverRepository(session)
-    leave_approver = await repository.get_by_department_id(department_id)
-    if leave_approver is None:
-        leave_approver = LeaveApprover(department_id=department_id)
-        leave_approver.department_approver_id = payload.department_approver_id
-        leave_approver.director_approver_id = payload.director_approver_id
-        leave_approver.president_approver_id = payload.president_approver_id
-        leave_approver.hr_approver_id = payload.hr_approver_id
-        return await repository.create(leave_approver)
-
-    leave_approver.department_approver_id = payload.department_approver_id
-    leave_approver.director_approver_id = payload.director_approver_id
-    leave_approver.president_approver_id = payload.president_approver_id
-    leave_approver.hr_approver_id = payload.hr_approver_id
-    return await repository.save(leave_approver)
-
-
-async def delete_leave_approver(session: AsyncSession, department_id: int) -> None:
-    repository = LeaveApproverRepository(session)
-    leave_approver = await repository.get_by_department_id(department_id)
-    if leave_approver is None:
-        raise NotFoundError("Leave approver settings not found.")
-    await repository.delete(leave_approver)
-
+    return leave_request
 
 async def list_leave_credits(
     session: AsyncSession, user_id: UUID | None = None, department_id: int | None = None

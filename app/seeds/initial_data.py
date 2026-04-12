@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 from app.models.app_log import AppLog
-from app.models.attendance import OvertimeApprover, OvertimeRequest, OvertimeRequestApprover
+from app.models.attendance import OvertimeRequest, OvertimeRequestApprover
 from app.models.department import Department
 from app.models.leave import (
     LeaveCredit,
@@ -156,39 +156,6 @@ async def _upsert_leave_credit(
     return leave_credit
 
 
-async def _upsert_overtime_approver(
-    session: AsyncSession,
-    department_id: int,
-    *,
-    department_approver_id: UUID | None = None,
-    director_approver_id: UUID | None = None,
-    president_approver_id: UUID | None = None,
-    hr_approver_id: UUID | None = None,
-) -> OvertimeApprover:
-    result = await session.execute(
-        select(OvertimeApprover).where(OvertimeApprover.department_id == department_id)
-    )
-    overtime_approver = result.scalar_one_or_none()
-
-    if overtime_approver is None:
-        overtime_approver = OvertimeApprover(
-            department_id=department_id,
-            department_approver_id=department_approver_id,
-            director_approver_id=director_approver_id,
-            president_approver_id=president_approver_id,
-            hr_approver_id=hr_approver_id,
-        )
-        session.add(overtime_approver)
-        await session.flush()
-        return overtime_approver
-
-    overtime_approver.department_approver_id = department_approver_id
-    overtime_approver.director_approver_id = director_approver_id
-    overtime_approver.president_approver_id = president_approver_id
-    overtime_approver.hr_approver_id = hr_approver_id
-    return overtime_approver
-
-
 async def seed_initial_data(session: AsyncSession) -> None:
     password_hash = hash_password(TEST_PASSWORD)
 
@@ -209,12 +176,6 @@ async def seed_initial_data(session: AsyncSession) -> None:
     hr_user = users["hr@example.com"]
 
     await _upsert_leave_credit(session, employee.id, credits=15, used_credits=3)
-    await _upsert_overtime_approver(
-        session,
-        departments["OPS"].id,
-        hr_approver_id=hr_user.id,
-    )
-
     session.add(
         LeaveRequest(
             user_id=employee.id,

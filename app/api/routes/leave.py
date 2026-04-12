@@ -4,11 +4,9 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest
+from app.models.leave import LeaveCredit, LeaveRequest
 from app.models.user import User
 from app.schemas.leave import (
-    LeaveApproverRead,
-    LeaveApproverUpsertRequest,
     LeaveCreditRead,
     LeaveCreditUpsertRequest,
     LeaveRequestCreateRequest,
@@ -19,9 +17,8 @@ from app.schemas.leave import (
 from app.services.leave import (
     cancel_leave_request,
     create_leave_request,
-    delete_leave_approver,
+    escalate_leave_request,
     get_my_leave_credit,
-    list_leave_approvers,
     list_leave_credits,
     list_leave_requests,
     list_leave_types,
@@ -29,7 +26,6 @@ from app.services.leave import (
     reset_leave_credit,
     review_leave_request,
     set_leave_credit,
-    upsert_leave_approver,
 )
 
 router = APIRouter(prefix="/leave", tags=["leave"])
@@ -125,31 +121,13 @@ async def cancel_request(
     return await cancel_leave_request(session, leave_id, current_user)
 
 
-@router.get("/approvers", response_model=list[LeaveApproverRead])
-async def get_approvers(
+@router.post("/requests/{leave_id}/escalate", response_model=LeaveRequestRead)
+async def escalate_request(
+    leave_id: int,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[LeaveApprover]:
-    return await list_leave_approvers(session)
-
-
-@router.put("/approvers/{department_id}", response_model=LeaveApproverRead)
-async def put_approver(
-    department_id: int,
-    payload: LeaveApproverUpsertRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> LeaveApprover:
-    return await upsert_leave_approver(session, department_id, payload)
-
-
-@router.delete("/approvers/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_approver(
-    department_id: int,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_staff_user),
-) -> None:
-    await delete_leave_approver(session, department_id)
+) -> LeaveRequest:
+    return await escalate_leave_request(session, leave_id, current_user)
 
 
 @router.get("/credits/me", response_model=LeaveCreditRead)

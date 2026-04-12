@@ -31,8 +31,6 @@ def test_core_routes_are_registered():
     assert "/users/{user_id}/biometric" in paths
     assert "/leave/requests/me" in paths
     assert "/leave/requests/review" in paths
-    assert "/leave/approvers" in paths
-    assert "/attendance/overtime-approvers" in paths
     assert "/attendance/overtime-approvers/me" in paths
     assert "/leave/credits/me" in paths
     assert "/payroll/policy-versions" in paths

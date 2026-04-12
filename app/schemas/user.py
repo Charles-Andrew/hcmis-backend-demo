@@ -56,6 +56,8 @@ class UserRead(BaseModel):
     biometric_uid: int | None = None
     role: str | None = None
     department_id: int | None = None
+    level_1_approver_id: UUID | None = None
+    level_2_approver_id: UUID | None = None
     department: DepartmentRead | None = None
     phone_number: str | None = None
     address: str | None = None
@@ -109,6 +111,8 @@ class UserCreateRequest(BaseModel):
     biometric_uid: int | None = None
     role: str | None = None
     department_id: int | None = None
+    level_1_approver_id: UUID | None = None
+    level_2_approver_id: UUID | None = None
     phone_number: str | None = None
     address: str | None = None
     date_of_birth: date | None = None
@@ -157,6 +161,8 @@ class UserUpdateRequest(BaseModel):
     biometric_uid: int | None = None
     role: str | None = None
     department_id: int | None = None
+    level_1_approver_id: UUID | None = None
+    level_2_approver_id: UUID | None = None
     phone_number: str | None = None
     address: str | None = None
     date_of_birth: date | None = None

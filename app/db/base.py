@@ -14,7 +14,7 @@ from app.models.attendance import (
     ShiftSwapRequest,
 )
 from app.models.department import Department
-from app.models.leave import LeaveApprover, LeaveCredit, LeaveRequest, LeaveRequestApprover
+from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestApprover
 from app.models.performance import Evaluation, Questionnaire, UserEvaluation
 from app.models.payroll import (
     FixedCompensation,
@@ -40,7 +40,6 @@ __all__ = [
     "EmployeeShiftAssignment",
     "Department",
     "Message",
-    "LeaveApprover",
     "LeaveCredit",
     "LeaveRequest",
     "LeaveRequestApprover",

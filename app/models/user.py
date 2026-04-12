@@ -39,6 +39,12 @@ class User(Base):
     biometric_uid: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     role: Mapped[str | None] = mapped_column(String(50), nullable=True)
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
+    level_1_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    level_2_approver_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     phone_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -57,6 +63,8 @@ class User(Base):
 
     department = relationship("Department", back_populates="users")
     position = relationship("Position")
+    level_1_approver = relationship("User", foreign_keys=[level_1_approver_id], remote_side=[id])
+    level_2_approver = relationship("User", foreign_keys=[level_2_approver_id], remote_side=[id])
     notifications_received = relationship(
         "Notification",
         foreign_keys="Notification.recipient_id",
