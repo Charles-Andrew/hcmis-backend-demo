@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class FakeUserRepository:
     users_by_email: dict[str, User] = {}
+    users_by_username: dict[str, User] = {}
     users_by_id: dict[UUID, User] = {}
     next_id = 1
 
@@ -23,6 +24,13 @@ class FakeUserRepository:
 
     async def get_by_email(self, email: str):
         return self.users_by_email.get(email)
+
+    async def get_by_login_identifier(self, identifier: str):
+        normalized = identifier.strip().lower()
+        user = self.users_by_email.get(normalized)
+        if user is not None:
+            return user
+        return self.users_by_username.get(normalized)
 
     async def get_by_id(self, user_id: UUID):
         return self.users_by_id.get(user_id)
@@ -33,6 +41,8 @@ class FakeUserRepository:
         user.created_at = user.created_at or utc_now()
         user.updated_at = user.updated_at or utc_now()
         self.users_by_email[user.email] = user
+        if user.username:
+            self.users_by_username[user.username] = user
         self.users_by_id[user.id] = user
         return user
 
@@ -61,6 +71,7 @@ async def _me(user: User) -> UserWithCapabilitiesRead:
 
 def test_register_returns_created_user(monkeypatch):
     FakeUserRepository.users_by_email = {}
+    FakeUserRepository.users_by_username = {}
     FakeUserRepository.users_by_id = {}
     FakeUserRepository.next_id = 1
 
@@ -97,6 +108,7 @@ def test_login_returns_token_and_user(monkeypatch):
         updated_at=utc_now(),
     )
     FakeUserRepository.users_by_email = {user.email: user}
+    FakeUserRepository.users_by_username = {}
     FakeUserRepository.users_by_id = {user.id: user}
     FakeUserRepository.next_id = 8
 
@@ -109,7 +121,7 @@ def test_login_returns_token_and_user(monkeypatch):
 
     response = anyio.run(
         _login,
-        {"email": user.email, "password": "secret-password"},
+        {"identifier": user.email, "password": "secret-password"},
     )
 
     assert response.token_type == "bearer"
@@ -117,6 +129,40 @@ def test_login_returns_token_and_user(monkeypatch):
     assert "view_dashboard_home" in response.user.capabilities
     assert "access_hr_workspace" not in response.user.capabilities
     assert decode_access_token(response.access_token)["sub"] == str(user.id)
+
+
+def test_login_accepts_username_identifier(monkeypatch):
+    user = User(
+        id=UUID(int=9),
+        email="john.doe@example.com",
+        username="john.doe",
+        password_hash="hashed",
+        first_name="John",
+        last_name="Doe",
+        can_modify_shift=False,
+        is_active=True,
+        is_superuser=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    FakeUserRepository.users_by_email = {user.email: user}
+    FakeUserRepository.users_by_username = {"john.doe": user}
+    FakeUserRepository.users_by_id = {user.id: user}
+    FakeUserRepository.next_id = 10
+
+    monkeypatch.setattr(auth_routes, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(
+        auth_routes,
+        "verify_password",
+        lambda password, password_hash: password == "secret-password",
+    )
+
+    response = anyio.run(
+        _login,
+        {"identifier": "john.doe", "password": "secret-password"},
+    )
+
+    assert response.user.id == user.id
 
 
 def test_me_returns_current_user_with_capabilities():

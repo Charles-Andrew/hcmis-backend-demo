@@ -24,18 +24,35 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
 
+def _normalize_username(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized == "":
+        return None
+    return normalized
+
+
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
     payload: AuthRegisterRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> UserRead:
     repository = UserRepository(session)
+    username = _normalize_username(payload.username)
     existing_user = await repository.get_by_email(payload.email)
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email is already registered.",
         )
+    if username is not None:
+        existing_username = await repository.get_by_username(username)
+        if existing_username is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username is already registered.",
+            )
 
     department_id = None
     if payload.department_name and payload.department_code:
@@ -65,6 +82,7 @@ async def register(
 
     user = User(
         email=payload.email.lower(),
+        username=username,
         password_hash=password_hash,
         first_name=payload.first_name,
         last_name=payload.last_name,
@@ -90,7 +108,8 @@ async def login(
     logger.info("auth_login_start request_id=%s", request_id)
 
     repository = UserRepository(session)
-    user = await repository.get_by_email(payload.email.lower())
+    identifier = (payload.identifier or (str(payload.email) if payload.email else "")).strip()
+    user = await repository.get_by_login_identifier(identifier)
     if user is None or not verify_password(payload.password, user.password_hash):
         logger.warning(
             "auth_login_invalid_credentials request_id=%s duration_ms=%d",
@@ -99,7 +118,7 @@ async def login(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
+            detail="Incorrect email/username or password.",
         )
     if (
         user.must_change_password

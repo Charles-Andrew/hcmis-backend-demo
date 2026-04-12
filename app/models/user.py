@@ -19,6 +19,7 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     temporary_password_expires_at: Mapped[datetime | None] = mapped_column(

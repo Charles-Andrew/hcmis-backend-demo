@@ -41,6 +41,7 @@ def normalize_rank(value: str | None) -> str | None:
 class UserRead(BaseModel):
     id: UUID
     email: str
+    username: str | None = None
     first_name: str
     last_name: str
     middle_name: str | None = None
@@ -93,6 +94,7 @@ class UserWithCapabilitiesRead(UserRead):
 
 class UserCreateRequest(BaseModel):
     email: EmailStr
+    username: str | None = None
     password: str = Field(min_length=8)
     first_name: str = ""
     last_name: str = ""
@@ -144,6 +146,7 @@ class UserCreateRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
+    username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     middle_name: str | None = None

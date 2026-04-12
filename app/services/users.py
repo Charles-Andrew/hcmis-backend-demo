@@ -28,6 +28,15 @@ from app.services.profile_photo_storage import (
 from app.core.time import utc_now
 
 
+def _normalize_username(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized == "":
+        return None
+    return normalized
+
+
 def _normalize_rank_components(
     position_id: int | None,
     rank_level: int | None,
@@ -189,10 +198,15 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
     user_repository = UserRepository(session)
     department_repository = DepartmentRepository(session)
     email = payload.email.lower()
+    username = _normalize_username(payload.username)
 
     existing_user = await user_repository.get_by_email(email)
     if existing_user is not None:
         raise ConflictError("Email is already registered.")
+    if username is not None:
+        existing_username = await user_repository.get_by_username(username)
+        if existing_username is not None:
+            raise ConflictError("Username is already registered.")
 
     if payload.employee_number:
         existing_employee = await user_repository.get_by_employee_number(
@@ -230,6 +244,7 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
     password_hash = hash_password(payload.password)
     user = User(
         email=email,
+        username=username,
         password_hash=password_hash,
         first_name=payload.first_name,
         last_name=payload.last_name,
@@ -300,6 +315,7 @@ async def update_user(
         raise NotFoundError("User not found.")
 
     data = payload.model_dump(exclude_unset=True)
+    username = _normalize_username(data.pop("username", user.username))
     department_id = data.pop("department_id", None) if "department_id" in data else None
     level_1_approver_id = (
         data.pop("level_1_approver_id", user.level_1_approver_id)
@@ -341,6 +357,12 @@ async def update_user(
 
     for field_name, value in data.items():
         setattr(user, field_name, value)
+    if username != user.username:
+        if username is not None:
+            existing_username = await user_repository.get_by_username(username)
+            if existing_username is not None and existing_username.id != user.id:
+                raise ConflictError("Username is already registered.")
+        user.username = username
     user.level_1_approver_id = level_1_approver_id
     user.level_2_approver_id = level_2_approver_id
 

@@ -37,6 +37,36 @@ class UserRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_by_username(self, username: str) -> User | None:
+        statement = (
+            select(User)
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
+            .where(User.username == username)
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_by_login_identifier(self, identifier: str) -> User | None:
+        normalized_identifier = identifier.strip().lower()
+        statement = (
+            select(User)
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
+            .where(
+                or_(
+                    func.lower(User.email) == normalized_identifier,
+                    func.lower(User.username) == normalized_identifier,
+                )
+            )
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def get_by_employee_number(self, employee_number: str) -> User | None:
         statement = (
             select(User)
@@ -95,6 +125,7 @@ class UserRepository:
                 func.lower(User.first_name).like(lowered)
                 | func.lower(User.last_name).like(lowered)
                 | func.lower(User.email).like(lowered)
+                | func.lower(User.username).like(lowered)
                 | func.lower(User.employee_number).like(lowered)
             )
         statement = statement.order_by(
