@@ -76,9 +76,15 @@ Follow these rules before making changes.
 - Each schema change must include a migration file.
 - Keep migrations reversible when feasible (`upgrade` + `downgrade`).
 - Prefer additive changes for compatibility when possible.
+- PostgreSQL identifiers must be `<= 63` characters (table names, index names, constraint names, and foreign key names).
+- When generated names would exceed `63` characters, define explicit short names (for example with `uq_`, `ix_`, and `fk_` abbreviations) in models and migrations.
+- Before finalizing a migration, run `uv run alembic upgrade head` and verify identifier lengths do not exceed PostgreSQL limits.
 - Alembic revision IDs must stay short enough for the `alembic_version.version_num` column.
 - Do not use long descriptive revision IDs like full snake_case sentences.
 - Keep `revision` values within 32 characters, and prefer compact IDs such as `0037_req_cancel_ot_status`.
+- Migration filenames must start with an ordered numeric index prefix (for example `0046_...`).
+- Keep filename slugs concise so the Alembic `revision` string also stays `<= 32` characters.
+- Prefer `revision` strings that match the indexed filename stem (for example `0046_cert_att_punch_time`).
 - Before finalizing a new migration, run `uv run alembic upgrade head` to catch revision metadata issues, not just SQL issues.
 
 ## Auth And Security Rules

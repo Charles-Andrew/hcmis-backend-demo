@@ -5,7 +5,7 @@ from app.schemas.user import UserWithCapabilitiesRead
 
 class AuthRegisterRequest(BaseModel):
     email: EmailStr
-    username: str | None = None
+    username: str = Field(min_length=1)
     password: str = Field(min_length=8)
     first_name: str = ""
     last_name: str = ""
@@ -13,6 +13,12 @@ class AuthRegisterRequest(BaseModel):
     role: str | None = None
     department_name: str | None = None
     department_code: str | None = None
+
+    @model_validator(mode="after")
+    def validate_username_required(self) -> "AuthRegisterRequest":
+        if self.username.strip() == "":
+            raise ValueError("Username is required.")
+        return self
 
 
 class AuthLoginRequest(BaseModel):

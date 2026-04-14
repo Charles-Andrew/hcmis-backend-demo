@@ -12,6 +12,8 @@ from app.models.department import Department  # noqa: F401
 from app.models.leave import LeaveCredit  # noqa: F401
 from app.models.leave import LeaveRequest  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
+from app.models.special_requests import CertificateAttendanceRequest  # noqa: F401
+from app.models.special_requests import OfficialBusinessRequest  # noqa: F401
 
 
 class User(Base):
@@ -107,6 +109,26 @@ class User(Base):
     overtime_approvals = relationship(
         "OvertimeRequest",
         foreign_keys="OvertimeRequest.approver_id",
+        back_populates="approver",
+    )
+    official_business_requests = relationship(
+        "OfficialBusinessRequest",
+        foreign_keys="OfficialBusinessRequest.user_id",
+        back_populates="user",
+    )
+    official_business_approvals = relationship(
+        "OfficialBusinessRequest",
+        foreign_keys="OfficialBusinessRequest.approver_id",
+        back_populates="approver",
+    )
+    certificate_attendance_requests = relationship(
+        "CertificateAttendanceRequest",
+        foreign_keys="CertificateAttendanceRequest.user_id",
+        back_populates="user",
+    )
+    certificate_attendance_approvals = relationship(
+        "CertificateAttendanceRequest",
+        foreign_keys="CertificateAttendanceRequest.approver_id",
         back_populates="approver",
     )
     shift_swap_requests = relationship(

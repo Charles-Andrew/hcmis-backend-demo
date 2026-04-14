@@ -199,14 +199,15 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
     department_repository = DepartmentRepository(session)
     email = payload.email.lower()
     username = _normalize_username(payload.username)
+    if username is None:
+        raise ValueError("Username is required.")
 
     existing_user = await user_repository.get_by_email(email)
     if existing_user is not None:
         raise ConflictError("Email is already registered.")
-    if username is not None:
-        existing_username = await user_repository.get_by_username(username)
-        if existing_username is not None:
-            raise ConflictError("Username is already registered.")
+    existing_username = await user_repository.get_by_username(username)
+    if existing_username is not None:
+        raise ConflictError("Username is already registered.")
 
     if payload.employee_number:
         existing_employee = await user_repository.get_by_employee_number(

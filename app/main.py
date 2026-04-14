@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.routes import auth, attendance, chat, health, leave, payroll, performance, reports
-from app.api.routes import departments, logs, notifications, profile, users
+from app.api.routes import departments, logs, notifications, profile, special_requests, users
 from app.core.exceptions import HCMISException
 from app.core.config import settings
 
@@ -29,6 +29,7 @@ app.include_router(logs.router)
 app.include_router(profile.router)
 app.include_router(attendance.router)
 app.include_router(leave.router)
+app.include_router(special_requests.router)
 app.include_router(payroll.router)
 app.include_router(performance.router)
 app.include_router(chat.router)

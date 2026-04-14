@@ -3,6 +3,7 @@ from typing import cast
 from uuid import UUID
 
 from fastapi import Request
+from pydantic import ValidationError
 from app.api.routes import auth as auth_routes
 from app.core.security import decode_access_token
 from app.core.time import utc_now
@@ -24,6 +25,9 @@ class FakeUserRepository:
 
     async def get_by_email(self, email: str):
         return self.users_by_email.get(email)
+
+    async def get_by_username(self, username: str):
+        return self.users_by_username.get(username)
 
     async def get_by_login_identifier(self, identifier: str):
         normalized = identifier.strip().lower()
@@ -80,6 +84,7 @@ def test_register_returns_created_user(monkeypatch):
 
     payload = {
         "email": "new.user@example.com",
+        "username": "new.user",
         "password": "supersecret1",
         "first_name": "New",
         "last_name": "User",
@@ -92,6 +97,29 @@ def test_register_returns_created_user(monkeypatch):
     assert response.email == payload["email"]
     assert response.employee_number == payload["employee_number"]
     assert response.role == payload["role"]
+
+
+def test_register_requires_username(monkeypatch):
+    FakeUserRepository.users_by_email = {}
+    FakeUserRepository.users_by_username = {}
+    FakeUserRepository.users_by_id = {}
+    FakeUserRepository.next_id = 1
+
+    monkeypatch.setattr(auth_routes, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(auth_routes, "hash_password", lambda password: "hashed")
+
+    payload = {
+        "email": "new.user@example.com",
+        "password": "supersecret1",
+        "first_name": "New",
+        "last_name": "User",
+    }
+
+    try:
+        anyio.run(_register, payload)
+        raise AssertionError("Expected ValidationError when username is missing.")
+    except ValidationError:
+        pass
 
 
 def test_login_returns_token_and_user(monkeypatch):

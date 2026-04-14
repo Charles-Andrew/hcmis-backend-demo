@@ -40,19 +40,23 @@ async def register(
 ) -> UserRead:
     repository = UserRepository(session)
     username = _normalize_username(payload.username)
+    if username is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username is required.",
+        )
     existing_user = await repository.get_by_email(payload.email)
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email is already registered.",
         )
-    if username is not None:
-        existing_username = await repository.get_by_username(username)
-        if existing_username is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Username is already registered.",
-            )
+    existing_username = await repository.get_by_username(username)
+    if existing_username is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username is already registered.",
+        )
 
     department_id = None
     if payload.department_name and payload.department_code:

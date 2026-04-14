@@ -135,7 +135,7 @@ class UserWithCapabilitiesRead(UserRead):
 
 class UserCreateRequest(BaseModel):
     email: EmailStr
-    username: str | None = None
+    username: str = Field(min_length=1)
     password: str = Field(min_length=8)
     first_name: str = ""
     last_name: str = ""
@@ -168,6 +168,13 @@ class UserCreateRequest(BaseModel):
     can_modify_shift: bool = False
     is_active: bool = True
     is_superuser: bool = False
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_required(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("Username is required.")
+        return value
 
     @field_validator("rank", mode="before")
     @classmethod
