@@ -28,6 +28,7 @@ from app.models.payroll import (
     ThirteenthMonthAdjustment,
 )
 from app.models.notification import Notification
+from app.models.training import Training, TrainingParticipant, TrainingParticipantAttachment
 from app.models.user import User, UserEmploymentMovement
 
 __all__ = [
@@ -61,6 +62,9 @@ __all__ = [
     "ThirteenthMonthAdjustment",
     "ShiftTemplate",
     "ShiftSwapRequest",
+    "Training",
+    "TrainingParticipant",
+    "TrainingParticipantAttachment",
     "User",
     "UserEmploymentMovement",
 ]

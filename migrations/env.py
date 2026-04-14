@@ -30,6 +30,9 @@ from app.models.payroll import ThirteenthMonthPayout  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.special_requests import CertificateAttendanceRequest  # noqa: F401
 from app.models.special_requests import OfficialBusinessRequest  # noqa: F401
+from app.models.training import Training  # noqa: F401
+from app.models.training import TrainingParticipant  # noqa: F401
+from app.models.training import TrainingParticipantAttachment  # noqa: F401
 from app.models.user import User  # noqa: F401
 
 config = context.config

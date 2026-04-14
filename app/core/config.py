@@ -71,6 +71,22 @@ class Settings(BaseSettings):
         default=900,
         validation_alias="SHARED_RESOURCES_SIGNED_URL_TTL_SECONDS",
     )
+    training_attachments_max_file_size_mb: int = Field(
+        default=50,
+        validation_alias="TRAINING_ATTACHMENTS_MAX_FILE_SIZE_MB",
+    )
+    training_attachments_s3_bucket: str = Field(
+        default="training-attachments",
+        validation_alias="TRAINING_ATTACHMENTS_S3_BUCKET",
+    )
+    training_attachments_s3_prefix: str = Field(
+        default="training-attachments",
+        validation_alias="TRAINING_ATTACHMENTS_S3_PREFIX",
+    )
+    training_attachments_signed_url_ttl_seconds: int = Field(
+        default=900,
+        validation_alias="TRAINING_ATTACHMENTS_SIGNED_URL_TTL_SECONDS",
+    )
     profile_photos_max_file_size_mb: int = Field(
         default=5,
         validation_alias="PROFILE_PHOTOS_MAX_FILE_SIZE_MB",

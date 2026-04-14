@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_staff_user, get_db_session
 from app.core.capabilities import normalize_role
 from app.models.user import User
+from app.models.user import UserEmploymentMovement
 from app.schemas.auth import UserPasswordResetResponse
 from app.schemas.user import (
     UserCreateRequest,
@@ -100,7 +101,7 @@ async def get_user_employment_movements(
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[UserEmploymentMovementRead]:
+) -> list[UserEmploymentMovement]:
     return await list_user_employment_movements(session, user_id, limit=limit)
 
 
