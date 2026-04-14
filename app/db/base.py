@@ -28,7 +28,7 @@ from app.models.payroll import (
     ThirteenthMonthAdjustment,
 )
 from app.models.notification import Notification
-from app.models.user import User
+from app.models.user import User, UserEmploymentMovement
 
 __all__ = [
     "Base",
@@ -62,4 +62,5 @@ __all__ = [
     "ShiftTemplate",
     "ShiftSwapRequest",
     "User",
+    "UserEmploymentMovement",
 ]

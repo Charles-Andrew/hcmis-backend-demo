@@ -155,6 +155,13 @@ class User(Base):
         foreign_keys="UserPositionAssignment.user_id",
         order_by="UserPositionAssignment.effective_from.desc()",
     )
+    employment_movements = relationship(
+        "UserEmploymentMovement",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="UserEmploymentMovement.user_id",
+        order_by="UserEmploymentMovement.changed_at.desc()",
+    )
     messages_sent = relationship(
         "Message",
         foreign_keys="Message.sender_id",
@@ -203,3 +210,21 @@ class UserPositionAssignment(Base):
 
     user = relationship("User", back_populates="position_assignments", foreign_keys=[user_id])
     position = relationship("Position")
+
+
+class UserEmploymentMovement(Base):
+    __tablename__ = "user_employment_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    old_value: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    change_batch_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    changed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    user = relationship("User", back_populates="employment_movements", foreign_keys=[user_id])

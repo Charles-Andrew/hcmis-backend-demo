@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
-from app.models.user import User, UserPositionAssignment
+from app.models.user import User, UserEmploymentMovement, UserPositionAssignment
 
 
 class UserRepository:
@@ -244,3 +244,33 @@ class UserPositionAssignmentRepository:
             )
         )
         return result.scalar_one()
+
+
+class UserEmploymentMovementRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create_many(
+        self,
+        movements: list[UserEmploymentMovement],
+    ) -> list[UserEmploymentMovement]:
+        if not movements:
+            return []
+        self.session.add_all(movements)
+        await self.session.commit()
+        return movements
+
+    async def list_for_user(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[UserEmploymentMovement]:
+        statement = (
+            select(UserEmploymentMovement)
+            .where(UserEmploymentMovement.user_id == user_id)
+            .order_by(UserEmploymentMovement.changed_at.desc(), UserEmploymentMovement.id.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())

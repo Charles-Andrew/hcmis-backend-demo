@@ -133,6 +133,20 @@ class UserWithCapabilitiesRead(UserRead):
     capabilities: list[str] = Field(default_factory=list)
 
 
+class UserEmploymentMovementRead(BaseModel):
+    id: int
+    user_id: UUID
+    field_name: str
+    old_value: str | None = None
+    new_value: str | None = None
+    change_batch_id: UUID
+    changed_by: UUID | None = None
+    effective_date: date | None = None
+    changed_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserCreateRequest(BaseModel):
     email: EmailStr
     username: str = Field(min_length=1)

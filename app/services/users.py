@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from datetime import UTC, date, datetime, timedelta
 
@@ -9,10 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from app.core.exceptions import ConflictError
 from app.core.exceptions import NotFoundError
 from app.core.security import generate_temporary_password, hash_password
-from app.models.user import User, UserPositionAssignment
+from app.models.user import User, UserEmploymentMovement, UserPositionAssignment
 from app.repositories.departments import DepartmentRepository
 from app.repositories.payroll import PositionRepository
 from app.repositories.users import UserRepository
+from app.repositories.users import UserEmploymentMovementRepository
 from app.repositories.users import UserPositionAssignmentRepository
 from app.schemas.user import UserCreateRequest
 from app.schemas.user import (
@@ -26,6 +27,19 @@ from app.services.profile_photo_storage import (
     save_profile_photo,
 )
 from app.core.time import utc_now
+
+
+EMPLOYMENT_MOVEMENT_FIELDS = {
+    "position_id",
+    "rank_level",
+    "step_number",
+    "rank",
+    "department_id",
+    "employee_type",
+    "employment_status",
+    "date_of_hiring",
+    "resignation_date",
+}
 
 
 def _normalize_username(value: str | None) -> str | None:
@@ -194,7 +208,12 @@ async def list_users(
     )
 
 
-async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User:
+async def create_user(
+    session: AsyncSession,
+    payload: UserCreateRequest,
+    *,
+    actor_user_id: UUID | None = None,
+) -> User:
     user_repository = UserRepository(session)
     department_repository = DepartmentRepository(session)
     email = payload.email.lower()
@@ -295,7 +314,7 @@ async def create_user(session: AsyncSession, payload: UserCreateRequest) -> User
                 payload.date_of_hiring,
             ),
             change_reason=payload.assignment_change_reason,
-            changed_by=None,
+            changed_by=actor_user_id,
         )
         created_user = await user_repository.get_by_id(created_user.id) or created_user
     return created_user
@@ -309,8 +328,23 @@ async def get_user(session: AsyncSession, user_id: UUID) -> User:
     return user
 
 
+async def list_user_employment_movements(
+    session: AsyncSession,
+    user_id: UUID,
+    *,
+    limit: int = 100,
+) -> list[UserEmploymentMovement]:
+    await get_user(session, user_id)
+    repository = UserEmploymentMovementRepository(session)
+    return await repository.list_for_user(user_id, limit=limit)
+
+
 async def update_user(
-    session: AsyncSession, user_id: UUID, payload: UserUpdateRequest
+    session: AsyncSession,
+    user_id: UUID,
+    payload: UserUpdateRequest,
+    *,
+    actor_user_id: UUID | None = None,
 ) -> User:
     user_repository = UserRepository(session)
     department_repository = DepartmentRepository(session)
@@ -336,6 +370,24 @@ async def update_user(
     step_number = data.pop("step_number", user.step_number) if "step_number" in data else user.step_number
     assignment_effective_from = data.pop("assignment_effective_from", None)
     assignment_change_reason = data.pop("assignment_change_reason", None)
+    proposed_employment_values = {
+        "position_id": position_id,
+        "rank_level": rank_level,
+        "step_number": step_number,
+        "department_id": department_id if "department_id" in payload.model_fields_set else user.department_id,
+        "employee_type": data.get("employee_type", user.employee_type),
+        "employment_status": data.get("employment_status", user.employment_status),
+        "date_of_hiring": data.get("date_of_hiring", user.date_of_hiring),
+        "resignation_date": data.get("resignation_date", user.resignation_date),
+    }
+    has_employment_value_change = any(
+        getattr(user, field_name) != proposed_value
+        for field_name, proposed_value in proposed_employment_values.items()
+    )
+    if has_employment_value_change and assignment_effective_from is None:
+        raise ConflictError(
+            "Assignment effective date is required when updating employment details."
+        )
     if "department_id" in payload.model_fields_set:
         if department_id is None:
             user.department_id = None
@@ -358,6 +410,10 @@ async def update_user(
         rank_level,
         step_number,
     )
+
+    original_values = {
+        field_name: getattr(user, field_name, None) for field_name in EMPLOYMENT_MOVEMENT_FIELDS
+    }
 
     for field_name, value in data.items():
         setattr(user, field_name, value)
@@ -382,6 +438,35 @@ async def update_user(
         user.rank = await _derive_rank_label(session, position_id, rank_level, step_number)
 
     saved_user = await user_repository.save(user)
+    changed_fields = [
+        field_name
+        for field_name in EMPLOYMENT_MOVEMENT_FIELDS
+        if original_values.get(field_name) != getattr(saved_user, field_name, None)
+    ]
+    if changed_fields:
+        movement_repository = UserEmploymentMovementRepository(session)
+        change_batch_id = uuid4()
+        movements = [
+            UserEmploymentMovement(
+                user_id=saved_user.id,
+                field_name=field_name,
+                old_value=(
+                    str(original_values.get(field_name))
+                    if original_values.get(field_name) is not None
+                    else None
+                ),
+                new_value=(
+                    str(getattr(saved_user, field_name, None))
+                    if getattr(saved_user, field_name, None) is not None
+                    else None
+                ),
+                change_batch_id=change_batch_id,
+                changed_by=actor_user_id,
+                effective_date=assignment_effective_from,
+            )
+            for field_name in sorted(changed_fields)
+        ]
+        await movement_repository.create_many(movements)
     if position_id is not None and rank_level is not None and assignment_changed:
         await _upsert_current_position_assignment(
             session,
@@ -394,7 +479,7 @@ async def update_user(
                 saved_user.date_of_hiring,
             ),
             change_reason=assignment_change_reason,
-            changed_by=None,
+            changed_by=actor_user_id,
         )
         saved_user = await user_repository.get_by_id(saved_user.id) or saved_user
     return saved_user

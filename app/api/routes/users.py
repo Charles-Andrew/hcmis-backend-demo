@@ -10,12 +10,14 @@ from app.schemas.auth import UserPasswordResetResponse
 from app.schemas.user import (
     UserCreateRequest,
     UserBiometricUpdateRequest,
+    UserEmploymentMovementRead,
     UserRead,
     UserUpdateRequest,
 )
 from app.services.users import (
     create_user,
     get_user,
+    list_user_employment_movements,
     list_users,
     reset_user_password,
     toggle_user_status,
@@ -75,7 +77,7 @@ async def post_user(
         fields_set=payload.model_fields_set,
     )
     try:
-        return await create_user(session, payload)
+        return await create_user(session, payload, actor_user_id=current_user.id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,6 +94,16 @@ async def get_user_by_id(
     return await get_user(session, user_id)
 
 
+@router.get("/{user_id}/employment-movements", response_model=list[UserEmploymentMovementRead])
+async def get_user_employment_movements(
+    user_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[UserEmploymentMovementRead]:
+    return await list_user_employment_movements(session, user_id, limit=limit)
+
+
 @router.patch("/{user_id}", response_model=UserRead)
 async def patch_user(
     user_id: UUID,
@@ -103,7 +115,7 @@ async def patch_user(
         current_user=current_user,
         fields_set=payload.model_fields_set,
     )
-    return await update_user(session, user_id, payload)
+    return await update_user(session, user_id, payload, actor_user_id=current_user.id)
 
 
 @router.post("/{user_id}/toggle-status", response_model=UserRead)

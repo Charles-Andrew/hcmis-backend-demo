@@ -6,11 +6,12 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.time import utc_now
 from app.models.department import Department
 from app.models.payroll import Position
 from app.models.user import User
+from app.models.user import UserEmploymentMovement
 from app.models.user import UserPositionAssignment
 from app.schemas.user import UserBiometricUpdateRequest
 from app.schemas.user import UserUpdateRequest
@@ -137,6 +138,17 @@ class FakeUserPositionAssignmentRepository:
         return assignment
 
 
+class FakeUserEmploymentMovementRepository:
+    items: list[UserEmploymentMovement] = []
+
+    def __init__(self, session):
+        self.session = session
+
+    async def create_many(self, movements: list[UserEmploymentMovement]):
+        self.items.extend(movements)
+        return movements
+
+
 async def _list_users(
     query: str | None = None,
     department_id: int | None = None,
@@ -159,6 +171,7 @@ async def _update_user(user_id: UUID, payload: UserUpdateRequest):
         session=cast(AsyncSession, object()),
         user_id=user_id,
         payload=payload,
+        actor_user_id=UUID(int=99),
     )
 
 
@@ -183,6 +196,7 @@ def setup_function():
     FakePositionRepository.positions = {}
     FakeUserPositionAssignmentRepository.items = {}
     FakeUserPositionAssignmentRepository.next_id = 1
+    FakeUserEmploymentMovementRepository.items = []
 
 
 def _make_department(department_id: int, name: str):
@@ -320,11 +334,21 @@ def test_update_user_changes_department_and_status(monkeypatch):
 
     monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
     monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(
+        user_service,
+        "UserEmploymentMovementRepository",
+        FakeUserEmploymentMovementRepository,
+    )
 
     response = anyio.run(
         _update_user,
         user.id,
-        UserUpdateRequest(first_name="Alicia", department_id=2, is_active=False),
+        UserUpdateRequest(
+            first_name="Alicia",
+            department_id=2,
+            is_active=False,
+            assignment_effective_from=date(2026, 1, 1),
+        ),
     )
 
     assert response.first_name == "Alicia"
@@ -348,6 +372,11 @@ def test_update_user_creates_position_assignment_history(monkeypatch):
         "UserPositionAssignmentRepository",
         FakeUserPositionAssignmentRepository,
     )
+    monkeypatch.setattr(
+        user_service,
+        "UserEmploymentMovementRepository",
+        FakeUserEmploymentMovementRepository,
+    )
 
     response = anyio.run(
         _update_user,
@@ -365,6 +394,12 @@ def test_update_user_creates_position_assignment_history(monkeypatch):
     assert response.step_number == 1
     assert response.rank == "OPS-2 - STEP 1"
     assert len(FakeUserPositionAssignmentRepository.items) == 1
+    assignment = next(iter(FakeUserPositionAssignmentRepository.items.values()))
+    assert assignment.changed_by == UUID(int=99)
+
+    movement_fields = [movement.field_name for movement in FakeUserEmploymentMovementRepository.items]
+    assert movement_fields == ["position_id", "rank", "rank_level", "step_number"]
+    assert all(movement.changed_by == UUID(int=99) for movement in FakeUserEmploymentMovementRepository.items)
 
 
 def test_update_user_missing_department_raises(monkeypatch):
@@ -375,11 +410,41 @@ def test_update_user_missing_department_raises(monkeypatch):
     monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
 
     try:
-        anyio.run(_update_user, user.id, UserUpdateRequest(department_id=999))
+        anyio.run(
+            _update_user,
+            user.id,
+            UserUpdateRequest(department_id=999, assignment_effective_from=date(2026, 1, 1)),
+        )
     except NotFoundError as exc:
         assert exc.detail == "Department not found."
     else:
         raise AssertionError("Expected NotFoundError to be raised")
+
+
+def test_update_user_employment_change_requires_effective_date(monkeypatch):
+    accounting = _make_department(1, "Accounting")
+    hr = _make_department(2, "Human Resources")
+    FakeDepartmentRepository.departments = {1: accounting, 2: hr}
+
+    user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", accounting, 1)
+    FakeUserRepository.users = {user.id: user}
+
+    monkeypatch.setattr(user_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(user_service, "DepartmentRepository", FakeDepartmentRepository)
+
+    try:
+        anyio.run(
+            _update_user,
+            user.id,
+            UserUpdateRequest(department_id=2),
+        )
+    except ConflictError as exc:
+        assert (
+            exc.detail
+            == "Assignment effective date is required when updating employment details."
+        )
+    else:
+        raise AssertionError("Expected ConflictError to be raised")
 
 
 def test_user_update_request_normalizes_and_validates_rank():
