@@ -1,3 +1,7 @@
+import re
+from calendar import monthrange
+from datetime import date
+from typing import TypedDict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +15,7 @@ from app.models.leave import (
     LeaveRequestApprover,
     LeaveRequestStatus,
     LeaveType,
+    LeaveTypePolicy,
 )
 from app.models.attendance import OvertimeRequest
 from app.repositories.attendance import OvertimeRepository
@@ -18,20 +23,115 @@ from app.models.user import User
 from app.repositories.leave import (
     LeaveCreditRepository,
     LeaveRequestRepository,
+    LeaveTypeRepository,
 )
 from app.repositories.users import UserRepository
 from app.services.notifications import create_notification
-from app.schemas.leave import LeaveCreditUpsertRequest, LeaveRequestCreateRequest, LeaveRequestReviewRequest
+from app.schemas.leave import (
+    LeaveCreditUpsertRequest,
+    LeaveRequestCreateRequest,
+    LeaveRequestReviewRequest,
+    LeaveTypePolicyUpsertRequest,
+)
+
+MONTHLY_INCREMENTAL_CREDITS = 1.25
 
 
-def list_leave_types() -> list[dict[str, str]]:
-    return [
-        {
-            "value": leave_type.value,
-            "label": leave_type.name.replace("_", " ").title(),
-        }
-        for leave_type in LeaveType
-    ]
+class LeaveCreditSnapshot(TypedDict):
+    user_id: UUID
+    leave_type: str
+    credits: float
+    used_credits: int
+    remaining_credits: float
+    user: User
+    created_at: None
+    updated_at: None
+
+
+def _normalize_leave_type_name(name: str) -> str:
+    return " ".join(name.strip().split())
+
+
+def _build_leave_type_code(name: str, existing_codes: set[str]) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    if not normalized:
+        normalized = "leave_type"
+    base = normalized[:24]
+    candidate = base
+    suffix = 2
+    while candidate in existing_codes:
+        suffix_text = f"_{suffix}"
+        candidate = f"{base[: max(1, 24 - len(suffix_text))]}{suffix_text}"
+        suffix += 1
+    return candidate
+
+
+def _to_leave_type_option(leave_type: LeaveTypePolicy) -> dict[str, str]:
+    return {"value": leave_type.code, "label": leave_type.name}
+
+
+async def list_leave_types(session: AsyncSession) -> list[dict[str, str]]:
+    leave_types = await LeaveTypeRepository(session).list()
+    return [_to_leave_type_option(item) for item in leave_types]
+
+
+async def list_leave_type_policies(session: AsyncSession) -> list[LeaveTypePolicy]:
+    return await LeaveTypeRepository(session).list()
+
+
+async def create_leave_type_policy(
+    session: AsyncSession,
+    payload: LeaveTypePolicyUpsertRequest,
+) -> LeaveTypePolicy:
+    repository = LeaveTypeRepository(session)
+    normalized_name = _normalize_leave_type_name(payload.name)
+    existing_by_name = await repository.get_by_name(normalized_name)
+    if existing_by_name is not None:
+        raise ConflictError("A leave type with this name already exists.")
+
+    existing_codes = {item.code for item in await repository.list()}
+    code = _build_leave_type_code(normalized_name, existing_codes)
+    leave_type = LeaveTypePolicy(
+        code=code,
+        name=normalized_name,
+        max_credits=payload.max_credits,
+        credit_mode=payload.credit_mode,
+    )
+    return await repository.create(leave_type)
+
+
+async def update_leave_type_policy(
+    session: AsyncSession,
+    leave_type_id: UUID,
+    payload: LeaveTypePolicyUpsertRequest,
+) -> LeaveTypePolicy:
+    repository = LeaveTypeRepository(session)
+    leave_type = await repository.get_by_id(leave_type_id)
+    if leave_type is None:
+        raise NotFoundError("Leave type not found.")
+
+    normalized_name = _normalize_leave_type_name(payload.name)
+    existing_by_name = await repository.get_by_name(normalized_name)
+    if existing_by_name is not None and existing_by_name.id != leave_type.id:
+        raise ConflictError("A leave type with this name already exists.")
+
+    leave_type.name = normalized_name
+    leave_type.max_credits = payload.max_credits
+    leave_type.credit_mode = payload.credit_mode
+    return await repository.save(leave_type)
+
+
+async def delete_leave_type_policy(session: AsyncSession, leave_type_id: UUID) -> None:
+    repository = LeaveTypeRepository(session)
+    leave_type = await repository.get_by_id(leave_type_id)
+    if leave_type is None:
+        raise NotFoundError("Leave type not found.")
+
+    is_used = await repository.has_leave_requests_for_code(leave_type.code)
+    if is_used:
+        raise ConflictError("Leave type cannot be deleted because it is already referenced.")
+
+    await repository.delete(leave_type)
 
 
 async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
@@ -41,6 +141,71 @@ async def _ensure_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCre
         leave_credit = LeaveCredit(user_id=user_id, credits=0, used_credits=0)
         return await repository.create(leave_credit)
     return leave_credit
+
+
+def _completed_months_since_hire(hire_date: date | None, as_of: date) -> int:
+    if hire_date is None or as_of < hire_date:
+        return 0
+    months = (as_of.year - hire_date.year) * 12 + (as_of.month - hire_date.month)
+    if as_of.day < hire_date.day:
+        months -= 1
+    return max(months, 0)
+
+
+def _build_anniversary_date(*, year: int, month: int, day: int) -> date:
+    valid_day = min(day, monthrange(year, month)[1])
+    return date(year, month, valid_day)
+
+
+def _credit_cycle_start(user: User, as_of: date) -> date:
+    hire_date = user.date_of_hiring
+    if hire_date is None:
+        return date(as_of.year, 1, 1)
+
+    this_year_anniversary = _build_anniversary_date(
+        year=as_of.year,
+        month=hire_date.month,
+        day=hire_date.day,
+    )
+    if as_of >= this_year_anniversary:
+        return this_year_anniversary
+
+    return _build_anniversary_date(
+        year=as_of.year - 1,
+        month=hire_date.month,
+        day=hire_date.day,
+    )
+
+
+def _calculate_total_credits(user: User, leave_type_policy: LeaveTypePolicy, as_of: date) -> float:
+    if user.date_of_hiring is None:
+        return 0.0
+
+    if leave_type_policy.credit_mode == "fixed":
+        return float(leave_type_policy.max_credits)
+
+    cycle_start = _credit_cycle_start(user, as_of)
+    months_completed = _completed_months_since_hire(cycle_start, as_of)
+    accrued = months_completed * MONTHLY_INCREMENTAL_CREDITS
+    return min(float(leave_type_policy.max_credits), accrued)
+
+
+async def _resolve_leave_type_policy(
+    session: AsyncSession, leave_type: str | None
+) -> LeaveTypePolicy:
+    repository = LeaveTypeRepository(session)
+    if leave_type is not None:
+        selected = await repository.get_by_code(leave_type)
+        if selected is None:
+            raise NotFoundError("Leave type not found.")
+        return selected
+
+    leave_types = await repository.list()
+    if not leave_types:
+        raise NotFoundError("No leave types configured.")
+
+    paid = next((item for item in leave_types if item.code == LeaveType.PAID.value), None)
+    return paid or leave_types[0]
 
 
 async def _get_approval_pool(session: AsyncSession, user: User) -> list[UUID]:
@@ -71,9 +236,6 @@ async def _get_backup_approver_id(session: AsyncSession, user: User) -> UUID | N
 
 
 def _leave_type_label(leave_type: str) -> str:
-    for item in list_leave_types():
-        if item["value"] == leave_type:
-            return item["label"]
     return leave_type
 
 
@@ -163,11 +325,6 @@ async def create_leave_request(
     )
     if existing_overtime is not None:
         raise ConflictError("An active overtime request already exists for this date.")
-
-    if payload.leave_type == LeaveType.PAID.value:
-        leave_credit = await _ensure_leave_credit(session, current_user.id)
-        if leave_credit.remaining_credits <= 0:
-            raise ConflictError("Insufficient leave credits for paid leave.")
 
     approval_pool = await _get_approval_pool(session, current_user)
     first_approver_id = approval_pool[0]
@@ -270,6 +427,20 @@ async def review_leave_request(
     if current_pool_assignment.status != LeaveRequestStatus.PENDING.value:
         raise ConflictError("Leave request has already been reviewed by you.")
 
+    if response == "APPROVE":
+        if payload.approval_type is None:
+            raise ConflictError("Approval type is required for leave approval.")
+        leave_request.approval_type = payload.approval_type
+        if payload.approval_type == "PAID":
+            leave_credit = await get_my_leave_credit(
+                session,
+                leave_request.user_id,
+                leave_type=leave_request.leave_type,
+            )
+            remaining_credits = leave_credit["remaining_credits"]
+            if remaining_credits <= 0:
+                raise ConflictError("Insufficient leave credits for paid leave.")
+
     final_status = (
         LeaveRequestStatus.APPROVED.value
         if response == "APPROVE"
@@ -298,16 +469,6 @@ async def review_leave_request(
     leave_request.status = final_status
 
     leave_request = await repository.save(leave_request)
-
-    if (
-        leave_request.status == LeaveRequestStatus.APPROVED.value
-        and leave_request.leave_type == LeaveType.PAID.value
-    ):
-        leave_credit = await _ensure_leave_credit(session, leave_request.user_id)
-        if leave_credit.remaining_credits <= 0:
-            raise ConflictError("Insufficient leave credits for paid leave.")
-        leave_credit.used_credits += 1
-        await LeaveCreditRepository(session).save(leave_credit)
 
     leave_date = leave_request.leave_date.isoformat()
     leave_type = _leave_type_label(leave_request.leave_type)
@@ -411,22 +572,80 @@ async def escalate_leave_request(
     return leave_request
 
 async def list_leave_credits(
-    session: AsyncSession, user_id: UUID | None = None, department_id: int | None = None
-) -> list[LeaveCredit]:
-    credits = await LeaveCreditRepository(session).list()
+    session: AsyncSession,
+    user_id: UUID | None = None,
+    department_id: int | None = None,
+    leave_type: str | None = None,
+) -> list[LeaveCreditSnapshot]:
+    leave_type_policy = await _resolve_leave_type_policy(session, leave_type)
+    users = await UserRepository(session).list(
+        department_id=department_id,
+        include_superusers=True,
+    )
     if user_id is not None:
-        credits = [credit for credit in credits if credit.user_id == user_id]
-    if department_id is not None:
-        credits = [
-            credit
-            for credit in credits
-            if credit.user is not None and credit.user.department_id == department_id
-        ]
-    return credits
+        users = [user for user in users if user.id == user_id]
+
+    snapshots: list[LeaveCreditSnapshot] = []
+    as_of = utc_now().date()
+    for user in users:
+        cycle_start = _credit_cycle_start(user, as_of)
+        used_credits = (
+            await LeaveRequestRepository(session).count_approved_by_user_ids_for_leave_type(
+                [user.id],
+                leave_type_policy.code,
+                approved_since=cycle_start,
+                paid_only=True,
+            )
+        ).get(user.id, 0)
+        credits = round(_calculate_total_credits(user, leave_type_policy, as_of), 2)
+        remaining_credits = round(max(credits - used_credits, 0), 2)
+        snapshots.append(
+            {
+                "user_id": user.id,
+                "leave_type": leave_type_policy.code,
+                "credits": credits,
+                "used_credits": used_credits,
+                "remaining_credits": remaining_credits,
+                "user": user,
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+
+    return snapshots
 
 
-async def get_my_leave_credit(session: AsyncSession, user_id: UUID) -> LeaveCredit:
-    return await _ensure_leave_credit(session, user_id)
+async def get_my_leave_credit(
+    session: AsyncSession, user_id: UUID, leave_type: str | None = None
+) -> LeaveCreditSnapshot:
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+
+    leave_type_policy = await _resolve_leave_type_policy(session, leave_type)
+    cycle_start = _credit_cycle_start(user, utc_now().date())
+    used_credits_by_user_id = (
+        await LeaveRequestRepository(session).count_approved_by_user_ids_for_leave_type(
+            [user.id],
+            leave_type_policy.code,
+            approved_since=cycle_start,
+            paid_only=True,
+        )
+    )
+    used_credits = used_credits_by_user_id.get(user.id, 0)
+    credits = round(_calculate_total_credits(user, leave_type_policy, utc_now().date()), 2)
+    remaining_credits = round(max(credits - used_credits, 0), 2)
+
+    return {
+        "user_id": user.id,
+        "leave_type": leave_type_policy.code,
+        "credits": credits,
+        "used_credits": used_credits,
+        "remaining_credits": remaining_credits,
+        "user": user,
+        "created_at": None,
+        "updated_at": None,
+    }
 
 
 async def set_leave_credit(

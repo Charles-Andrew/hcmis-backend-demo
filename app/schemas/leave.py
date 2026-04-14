@@ -14,30 +14,50 @@ class LeaveTypeOptionRead(BaseModel):
     label: str
 
 
-class LeaveCreditUpsertRequest(BaseModel):
-    credits: int = Field(ge=0)
-
-
-class LeaveCreditRead(BaseModel):
-    user_id: UUID
-    credits: int
-    used_credits: int
-    remaining_credits: int
-    user: UserRead | None = None
+class LeaveTypePolicyRead(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    max_credits: int
+    credit_mode: Literal["incremental", "fixed"]
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class LeaveTypePolicyUpsertRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    max_credits: int = Field(ge=0)
+    credit_mode: Literal["incremental", "fixed"]
+
+
+class LeaveCreditUpsertRequest(BaseModel):
+    credits: int = Field(ge=0)
+
+
+class LeaveCreditRead(BaseModel):
+    user_id: UUID
+    leave_type: str | None = None
+    credits: float
+    used_credits: int
+    remaining_credits: float
+    user: UserRead | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LeaveRequestCreateRequest(BaseModel):
     leave_date: date
-    leave_type: Literal["PA", "UN", "WR"]
+    leave_type: str = Field(min_length=1, max_length=24)
     info: str | None = None
 
 
 class LeaveRequestReviewRequest(BaseModel):
     response: Literal["APPROVE", "REJECT"]
+    approval_type: Literal["PAID", "NON_PAID"] | None = None
 
 
 class LeaveRequestApproverRead(BaseModel):
@@ -56,6 +76,7 @@ class LeaveRequestRead(BaseModel):
     user_id: UUID
     leave_date: date
     leave_type: str
+    approval_type: Literal["PAID", "NON_PAID"] | None = None
     info: str | None = None
     first_approver_id: UUID | None = None
     first_approver_status: str

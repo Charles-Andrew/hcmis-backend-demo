@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
-from app.models.leave import LeaveCredit, LeaveRequest
+from app.models.leave import LeaveCredit, LeaveRequest, LeaveTypePolicy
 from app.models.user import User
 from app.schemas.leave import (
     LeaveCreditRead,
@@ -13,27 +13,73 @@ from app.schemas.leave import (
     LeaveRequestRead,
     LeaveRequestReviewRequest,
     LeaveTypeOptionRead,
+    LeaveTypePolicyRead,
+    LeaveTypePolicyUpsertRequest,
 )
 from app.services.leave import (
+    LeaveCreditSnapshot,
     cancel_leave_request,
+    create_leave_type_policy,
     create_leave_request,
+    delete_leave_type_policy,
     escalate_leave_request,
     get_my_leave_credit,
     list_leave_credits,
+    list_leave_type_policies,
     list_leave_requests,
     list_leave_types,
     list_leave_years,
     reset_leave_credit,
     review_leave_request,
     set_leave_credit,
+    update_leave_type_policy,
 )
 
 router = APIRouter(prefix="/leave", tags=["leave"])
 
 
 @router.get("/types", response_model=list[LeaveTypeOptionRead])
-async def get_types() -> list[dict[str, str]]:
-    return list_leave_types()
+async def get_types(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, str]]:
+    return await list_leave_types(session)
+
+
+@router.get("/types/manage", response_model=list[LeaveTypePolicyRead])
+async def get_leave_type_policies(
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> list[LeaveTypePolicy]:
+    return await list_leave_type_policies(session)
+
+
+@router.post("/types", response_model=LeaveTypePolicyRead, status_code=status.HTTP_201_CREATED)
+async def post_leave_type_policy(
+    payload: LeaveTypePolicyUpsertRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> LeaveTypePolicy:
+    return await create_leave_type_policy(session, payload)
+
+
+@router.put("/types/{leave_type_id}", response_model=LeaveTypePolicyRead)
+async def put_leave_type_policy(
+    leave_type_id: UUID,
+    payload: LeaveTypePolicyUpsertRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> LeaveTypePolicy:
+    return await update_leave_type_policy(session, leave_type_id, payload)
+
+
+@router.delete("/types/{leave_type_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_leave_type(
+    leave_type_id: UUID,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> None:
+    await delete_leave_type_policy(session, leave_type_id)
 
 
 @router.get("/years", response_model=list[int])
@@ -132,20 +178,27 @@ async def escalate_request(
 
 @router.get("/credits/me", response_model=LeaveCreditRead)
 async def get_my_credit(
+    leave_type: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
-) -> LeaveCredit:
-    return await get_my_leave_credit(session, current_user.id)
+) -> LeaveCreditSnapshot:
+    return await get_my_leave_credit(session, current_user.id, leave_type=leave_type)
 
 
 @router.get("/credits", response_model=list[LeaveCreditRead])
 async def get_credits(
     user_id: UUID | None = Query(default=None),
     department_id: int | None = Query(default=None),
+    leave_type: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
-) -> list[LeaveCredit]:
-    return await list_leave_credits(session, user_id=user_id, department_id=department_id)
+) -> list[LeaveCreditSnapshot]:
+    return await list_leave_credits(
+        session,
+        user_id=user_id,
+        department_id=department_id,
+        leave_type=leave_type,
+    )
 
 
 @router.put("/credits/{user_id}", response_model=LeaveCreditRead)

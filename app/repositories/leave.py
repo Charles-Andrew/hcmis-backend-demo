@@ -5,13 +5,62 @@ from datetime import date
 from typing import List
 from uuid import UUID
 
-from sqlalchemy import extract, func, select
+from sqlalchemy import extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
-from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestApprover
+from app.models.leave import LeaveCredit, LeaveRequest, LeaveRequestApprover, LeaveTypePolicy
 from app.models.user import User
+
+
+class LeaveTypeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list(self) -> List[LeaveTypePolicy]:
+        statement = select(LeaveTypePolicy).order_by(LeaveTypePolicy.name.asc())
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, leave_type_id: UUID) -> LeaveTypePolicy | None:
+        statement = select(LeaveTypePolicy).where(LeaveTypePolicy.id == leave_type_id)
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_by_name(self, name: str) -> LeaveTypePolicy | None:
+        statement = select(LeaveTypePolicy).where(func.lower(LeaveTypePolicy.name) == name.lower())
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_by_code(self, code: str) -> LeaveTypePolicy | None:
+        statement = select(LeaveTypePolicy).where(LeaveTypePolicy.code == code)
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def has_leave_requests_for_code(self, code: str) -> bool:
+        statement = (
+            select(func.count(LeaveRequest.id))
+            .where(LeaveRequest.leave_type == code)
+            .limit(1)
+        )
+        result = await self.session.execute(statement)
+        return (result.scalar() or 0) > 0
+
+    async def create(self, leave_type: LeaveTypePolicy) -> LeaveTypePolicy:
+        self.session.add(leave_type)
+        await self.session.commit()
+        await self.session.refresh(leave_type)
+        return leave_type
+
+    async def save(self, leave_type: LeaveTypePolicy) -> LeaveTypePolicy:
+        await self.session.commit()
+        await self.session.refresh(leave_type)
+        return leave_type
+
+    async def delete(self, leave_type: LeaveTypePolicy) -> None:
+        await self.session.delete(leave_type)
+        await self.session.commit()
 
 
 class LeaveCreditRepository:
@@ -140,6 +189,42 @@ class LeaveRequestRepository:
         )
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def count_approved_by_user_ids_for_leave_type(
+        self,
+        user_ids: List[UUID],
+        leave_type: str,
+        approved_since: date | None = None,
+        paid_only: bool = False,
+    ) -> dict[UUID, int]:
+        if not user_ids:
+            return {}
+
+        statement = (
+            select(LeaveRequest.user_id, func.count(LeaveRequest.id))
+            .where(
+                LeaveRequest.user_id.in_(user_ids),
+                LeaveRequest.leave_type == leave_type,
+                LeaveRequest.status == "APPROVED",
+            )
+        )
+        if paid_only:
+            statement = statement.where(
+                or_(
+                    LeaveRequest.approval_type == "PAID",
+                    LeaveRequest.approval_type.is_(None),
+                )
+            )
+        if approved_since is not None:
+            statement = statement.where(LeaveRequest.leave_date >= approved_since)
+
+        statement = statement.group_by(LeaveRequest.user_id)
+        result = await self.session.execute(statement)
+        counts: dict[UUID, int] = {}
+        for user_id, count in result.all():
+            if user_id is not None:
+                counts[user_id] = int(count or 0)
+        return counts
 
     async def create(self, leave_request: LeaveRequest) -> LeaveRequest:
         self.session.add(leave_request)

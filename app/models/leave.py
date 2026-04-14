@@ -1,12 +1,45 @@
 from datetime import date, datetime
 from enum import Enum as PyEnum
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import utc_now
 from app.models.base import Base
+
+
+class LeaveTypePolicy(Base):
+    __tablename__ = "leave_types"
+    __table_args__ = (
+        CheckConstraint("max_credits >= 0", name="ck_leave_types_max_credits_non_negative"),
+        CheckConstraint(
+            "credit_mode IN ('incremental', 'fixed')",
+            name="ck_leave_types_credit_mode",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, index=True)
+    code: Mapped[str] = mapped_column(String(24), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
+    max_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    credit_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
 
 
 class LeaveType(str, PyEnum):
@@ -50,7 +83,8 @@ class LeaveRequest(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     leave_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    leave_type: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    leave_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    approval_type: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     info: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
