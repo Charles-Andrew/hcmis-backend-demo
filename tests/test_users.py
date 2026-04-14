@@ -393,6 +393,16 @@ def test_user_update_request_normalizes_and_validates_rank():
         pass
 
 
+def test_user_update_request_normalizes_employee_fields():
+    payload = UserUpdateRequest(
+        employee_type="manager",
+        employment_status="regular",
+    )
+
+    assert payload.employee_type == "MANAGER"
+    assert payload.employment_status == "REGULAR"
+
+
 def test_toggle_user_status_flips_active_flag(monkeypatch):
     user = _make_user(UUID(int=1), "Alice", "A", "alice@example.com", None, None, is_active=True)
     FakeUserRepository.users = {user.id: user}

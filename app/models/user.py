@@ -16,6 +16,12 @@ from app.models.notification import Notification  # noqa: F401
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "level_1_approver_id IS NULL OR level_2_approver_id IS NULL OR level_1_approver_id <> level_2_approver_id",
+            name="ck_users_approvers_distinct",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
@@ -29,7 +35,8 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
     middle_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     gender: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    education: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    highest_education_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    highest_education_program: Mapped[str | None] = mapped_column(String(255), nullable=True)
     civil_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
     religion: Mapped[str | None] = mapped_column(String(20), nullable=True)
     rank: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -39,6 +46,8 @@ class User(Base):
     employee_number: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     biometric_uid: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    employee_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    employment_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     level_1_approver_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
@@ -85,6 +94,11 @@ class User(Base):
     leave_credit = relationship("LeaveCredit", back_populates="user", uselist=False)
     attendance_records = relationship("AttendanceRecord", back_populates="user")
     employee_shift_assignments = relationship("EmployeeShiftAssignment", back_populates="user")
+    shift_templates = relationship(
+        "ShiftTemplate",
+        secondary="user_shifts",
+        back_populates="users",
+    )
     overtime_requests = relationship(
         "OvertimeRequest",
         foreign_keys="OvertimeRequest.user_id",
@@ -133,6 +147,10 @@ class User(Base):
     @property
     def daily_shift_schedules(self):
         return self.employee_shift_assignments
+
+    @property
+    def shifts(self):
+        return self.shift_templates
 
 
 class UserPositionAssignment(Base):

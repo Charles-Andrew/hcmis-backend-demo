@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import deps as api_deps
+from app.api.routes.users import ensure_hr_can_modify_employment_fields
 from app.core.capabilities import resolve_user_capabilities
 from app.core.time import utc_now
 from app.models.user import User
@@ -89,3 +90,25 @@ def test_capability_resolution_for_superuser():
     assert "access_hr_workspace" in capabilities
     assert "manage_shift_templates" in capabilities
     assert "view_app_logs" in capabilities
+
+
+def test_non_hr_cannot_modify_employee_type_or_employment_status():
+    superuser = _make_user(7, "EMP", is_superuser=True)
+
+    with pytest.raises(HTTPException) as exc:
+        ensure_hr_can_modify_employment_fields(
+            current_user=superuser,
+            fields_set={"employee_type"},
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Only HR can modify employee type and employment status."
+
+
+def test_hr_can_modify_employee_type_or_employment_status():
+    hr_user = _make_user(8, "HR")
+
+    ensure_hr_can_modify_employment_fields(
+        current_user=hr_user,
+        fields_set={"employment_status"},
+    )

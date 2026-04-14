@@ -8,6 +8,7 @@ from pydantic import EmailStr
 from pydantic import Field
 from pydantic import field_serializer
 from pydantic import field_validator
+from pydantic import model_validator
 
 from app.services.profile_photo_storage import get_profile_photo_read_url
 from app.schemas.department import DepartmentRead
@@ -15,6 +16,17 @@ from app.schemas.department import DepartmentRead
 RANK_PATTERN = re.compile(
     r"^(?P<position_code>[A-Z0-9]+)-(?P<rank>\d+)(?:\s*-\s*STEP\s*(?P<step>\d+))?$"
 )
+EMPLOYEE_TYPE_VALUES = {
+    "RANK_AND_FILE",
+    "SUPERVISOR",
+    "MANAGER",
+    "OFFICER",
+}
+EMPLOYMENT_STATUS_VALUES = {
+    "CONTRACTUAL",
+    "PROVISIONARY",
+    "REGULAR",
+}
 
 
 def normalize_rank(value: str | None) -> str | None:
@@ -38,6 +50,32 @@ def normalize_rank(value: str | None) -> str | None:
     return f"{match.group('position_code')}-{rank} - STEP {step_number}"
 
 
+def normalize_employee_type(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if normalized == "":
+        return None
+    if normalized not in EMPLOYEE_TYPE_VALUES:
+        raise ValueError(
+            "Employee type must be one of: RANK_AND_FILE, SUPERVISOR, MANAGER, OFFICER."
+        )
+    return normalized
+
+
+def normalize_employment_status(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if normalized == "":
+        return None
+    if normalized not in EMPLOYMENT_STATUS_VALUES:
+        raise ValueError(
+            "Employment status must be one of: CONTRACTUAL, PROVISIONARY, REGULAR."
+        )
+    return normalized
+
+
 class UserRead(BaseModel):
     id: UUID
     email: str
@@ -46,7 +84,8 @@ class UserRead(BaseModel):
     last_name: str
     middle_name: str | None = None
     gender: str | None = None
-    education: str | None = None
+    highest_education_level: str | None = None
+    highest_education_program: str | None = None
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
@@ -56,6 +95,8 @@ class UserRead(BaseModel):
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
+    employee_type: str | None = None
+    employment_status: str | None = None
     department_id: int | None = None
     level_1_approver_id: UUID | None = None
     level_2_approver_id: UUID | None = None
@@ -100,7 +141,8 @@ class UserCreateRequest(BaseModel):
     last_name: str = ""
     middle_name: str | None = None
     gender: str | None = None
-    education: str | None = None
+    highest_education_level: str | None = None
+    highest_education_program: str | None = None
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
@@ -112,6 +154,8 @@ class UserCreateRequest(BaseModel):
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
+    employee_type: str | None = None
+    employment_status: str | None = None
     department_id: int | None = None
     level_1_approver_id: UUID | None = None
     level_2_approver_id: UUID | None = None
@@ -144,6 +188,26 @@ class UserCreateRequest(BaseModel):
             raise ValueError("Step number must be at least 1.")
         return value
 
+    @field_validator("employee_type", mode="before")
+    @classmethod
+    def normalize_employee_type_value(cls, value: str | None) -> str | None:
+        return normalize_employee_type(value)
+
+    @field_validator("employment_status", mode="before")
+    @classmethod
+    def normalize_employment_status_value(cls, value: str | None) -> str | None:
+        return normalize_employment_status(value)
+
+    @model_validator(mode="after")
+    def validate_approver_uniqueness(self) -> "UserCreateRequest":
+        if (
+            self.level_1_approver_id is not None
+            and self.level_2_approver_id is not None
+            and self.level_1_approver_id == self.level_2_approver_id
+        ):
+            raise ValueError("Level 1 and Level 2 approvers must be different users.")
+        return self
+
 
 class UserUpdateRequest(BaseModel):
     username: str | None = None
@@ -151,7 +215,8 @@ class UserUpdateRequest(BaseModel):
     last_name: str | None = None
     middle_name: str | None = None
     gender: str | None = None
-    education: str | None = None
+    highest_education_level: str | None = None
+    highest_education_program: str | None = None
     civil_status: str | None = None
     religion: str | None = None
     rank: str | None = None
@@ -163,6 +228,8 @@ class UserUpdateRequest(BaseModel):
     employee_number: str | None = None
     biometric_uid: int | None = None
     role: str | None = None
+    employee_type: str | None = None
+    employment_status: str | None = None
     department_id: int | None = None
     level_1_approver_id: UUID | None = None
     level_2_approver_id: UUID | None = None
@@ -195,6 +262,26 @@ class UserUpdateRequest(BaseModel):
             raise ValueError("Step number must be at least 1.")
         return value
 
+    @field_validator("employee_type", mode="before")
+    @classmethod
+    def normalize_employee_type_value(cls, value: str | None) -> str | None:
+        return normalize_employee_type(value)
+
+    @field_validator("employment_status", mode="before")
+    @classmethod
+    def normalize_employment_status_value(cls, value: str | None) -> str | None:
+        return normalize_employment_status(value)
+
+    @model_validator(mode="after")
+    def validate_approver_uniqueness(self) -> "UserUpdateRequest":
+        if (
+            self.level_1_approver_id is not None
+            and self.level_2_approver_id is not None
+            and self.level_1_approver_id == self.level_2_approver_id
+        ):
+            raise ValueError("Level 1 and Level 2 approvers must be different users.")
+        return self
+
 
 class UserBiometricUpdateRequest(BaseModel):
     biometric_uid: int | None = None
@@ -205,7 +292,8 @@ class UserProfileUpdateRequest(BaseModel):
     last_name: str | None = None
     middle_name: str | None = None
     gender: str | None = None
-    education: str | None = None
+    highest_education_level: str | None = None
+    highest_education_program: str | None = None
     civil_status: str | None = None
     religion: str | None = None
     phone_number: str | None = None

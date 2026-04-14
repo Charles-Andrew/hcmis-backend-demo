@@ -63,6 +63,11 @@ class FakeUserRepository:
             users = [user for user in users if not user.is_superuser]
         return users
 
+    async def save(self, user: User):
+        user.updated_at = utc_now()
+        self.users[user.id] = user
+        return user
+
 
 class FakeDepartmentRepository:
     departments: dict[int, Department] = {}
@@ -532,6 +537,14 @@ async def _update_department_schedule(department_id: int, payload: DepartmentSch
     )
 
 
+async def _update_user_shift_policy(user_id: UUID, shift_ids: list[int]):
+    return await attendance_service.update_user_shift_policy(
+        session=cast(AsyncSession, object()),
+        user_id=user_id,
+        payload=attendance_service.UserShiftPolicyUpdateRequest(shift_ids=shift_ids),
+    )
+
+
 async def _fake_get_department_with_shifts(session, department_id: int):
     return FakeDepartmentRepository.departments[department_id]
 
@@ -712,6 +725,7 @@ def _make_user(
         created_at=utc_now(),
         updated_at=utc_now(),
     )
+    user.shift_templates = []
     return user
 
 
@@ -779,10 +793,52 @@ def test_update_department_schedule_sets_workweek_and_shifts(monkeypatch):
     assert response.shifts[0].id == 1
 
 
+def test_update_user_shift_policy_sets_allowed_templates(monkeypatch):
+    user = _make_user(UUID(int=1))
+    shift_one = _make_shift(1, "Morning")
+    shift_two = _make_shift(2, "Evening")
+    FakeUserRepository.users = {user.id: user}
+    FakeShiftTemplateRepository.shifts = {shift_one.id: shift_one, shift_two.id: shift_two}
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
+
+    response = anyio.run(_update_user_shift_policy, user.id, [shift_two.id, shift_one.id])
+    assert [shift.id for shift in response.shift_templates] == [shift_two.id, shift_one.id]
+
+
+def test_create_employee_shift_assignment_rejects_unallowed_template(monkeypatch):
+    user = _make_user(UUID(int=1))
+    allowed_shift = _make_shift(1, "Morning")
+    blocked_shift = _make_shift(2, "Night")
+    user.shift_templates = [allowed_shift]
+
+    FakeUserRepository.users = {user.id: user}
+    FakeShiftTemplateRepository.shifts = {
+        allowed_shift.id: allowed_shift,
+        blocked_shift.id: blocked_shift,
+    }
+    FakeEmployeeShiftAssignmentRepository.schedules = {}
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
+
+    with pytest.raises(
+        ConflictError, match="selected shift template is not allowed for this user"
+    ):
+        anyio.run(_create_employee_shift_assignment, date(2026, 3, 24), user.id, blocked_shift.id)
+
+
 def test_create_employee_shift_assignment_rejects_duplicate(monkeypatch):
     department = _make_department(1)
     user = _make_user(UUID(int=1), department=department)
     shift = _make_shift(1)
+    user.shift_templates = [shift]
     existing = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 24),
@@ -887,13 +943,12 @@ def test_copy_previous_month_shift_assignments(monkeypatch):
     assert [assignment.shift_template_id for assignment in copied_assignments] == [1, 2]
 
 
-def test_generate_month_shift_assignments_from_department_policy(monkeypatch):
+def test_generate_month_shift_assignments_from_user_shift_template(monkeypatch):
     department = _make_department(1)
-    department.workweek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     primary_shift = _make_shift(1, "Morning")
     secondary_shift = _make_shift(2, "Night")
-    department.shift_templates = [primary_shift, secondary_shift]
     user = _make_user(UUID(int=1), department=department)
+    user.shift_templates = [primary_shift, secondary_shift]
     existing_assignment = EmployeeShiftAssignment(
         id=1,
         date=date(2026, 3, 3),
@@ -906,12 +961,15 @@ def test_generate_month_shift_assignments_from_department_policy(monkeypatch):
     )
 
     FakeUserRepository.users = {user.id: user}
-    FakeDepartmentRepository.departments = {department.id: department}
+    FakeShiftTemplateRepository.shifts = {
+        primary_shift.id: primary_shift,
+        secondary_shift.id: secondary_shift,
+    }
     FakeEmployeeShiftAssignmentRepository.schedules = {existing_assignment.id: existing_assignment}
     FakeEmployeeShiftAssignmentRepository.next_id = 2
 
     monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
-    monkeypatch.setattr(attendance_service, "DepartmentRepository", FakeDepartmentRepository)
+    monkeypatch.setattr(attendance_service, "ShiftTemplateRepository", FakeShiftTemplateRepository)
     monkeypatch.setattr(
         attendance_service,
         "EmployeeShiftAssignmentRepository",

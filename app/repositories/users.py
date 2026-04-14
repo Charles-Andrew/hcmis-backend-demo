@@ -19,6 +19,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(User.id == user_id)
         )
@@ -31,6 +32,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(User.email == email)
         )
@@ -43,6 +45,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(User.username == username)
         )
@@ -56,6 +59,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(
                 or_(
@@ -73,6 +77,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(User.employee_number == employee_number)
         )
@@ -85,6 +90,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .where(User.biometric_uid == biometric_uid)
         )
@@ -105,6 +111,7 @@ class UserRepository:
             .options(
                 selectinload(User.department),
                 selectinload(User.position),
+                selectinload(User.shift_templates),
             )
             .outerjoin(Department, Department.id == User.department_id)
         )

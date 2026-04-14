@@ -435,7 +435,9 @@ async def get_education_level_report(session: AsyncSession, as_of_date: date | s
     report_repo = ReportsRepository(session)
     as_of_date_value = _as_date(as_of_date)
     users = await report_repo.list_users(as_of_date=as_of_date_value)
-    counts = Counter(user.education for user in users if user.education)
+    counts = Counter(
+        user.highest_education_level for user in users if user.highest_education_level
+    )
     labels = [EDUCATION_LABELS.get(code, code) for code in counts.keys()]
     values = [counts[code] for code in counts.keys()]
     return {

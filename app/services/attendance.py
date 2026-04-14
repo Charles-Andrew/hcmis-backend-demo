@@ -46,6 +46,7 @@ from app.schemas.attendance import (
     AttendanceSummaryLeaveRead,
     AttendanceSummaryRead,
     DepartmentScheduleUpdateRequest,
+    UserShiftPolicyUpdateRequest,
     DepartmentRosterDayCreateRequest,
     EmployeeShiftAssignmentCreateRequest,
     EmployeeShiftAssignmentCopyPreviousMonthRequest,
@@ -192,6 +193,21 @@ async def _get_department_with_shifts(
     return department
 
 
+async def _get_user_with_shifts(
+    session: AsyncSession, user_id: UUID
+) -> User:
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+    return user
+
+
+def _ensure_user_shift_template_allowed(user: User, shift_id: int) -> None:
+    allowed_shift_ids = {shift.id for shift in user.shift_templates}
+    if shift_id not in allowed_shift_ids:
+        raise ConflictError("The selected shift template is not allowed for this user.")
+
+
 async def list_shift_templates(session: AsyncSession) -> list[ShiftTemplate]:
     return await ShiftTemplateRepository(session).list()
 
@@ -277,6 +293,32 @@ async def get_department_schedule(
     return await _get_department_with_shifts(session, department_id)
 
 
+async def get_user_shift_policy(session: AsyncSession, user_id: UUID) -> User:
+    return await _get_user_with_shifts(session, user_id)
+
+
+async def update_user_shift_policy(
+    session: AsyncSession, user_id: UUID, payload: UserShiftPolicyUpdateRequest
+) -> User:
+    user_repository = UserRepository(session)
+    shift_repository = ShiftTemplateRepository(session)
+    user = await user_repository.get_by_id(user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
+
+    selected_shifts: list[ShiftTemplate] = []
+    for shift_id in dict.fromkeys(payload.shift_ids):
+        shift = await shift_repository.get_by_id(shift_id)
+        if shift is None:
+            raise NotFoundError("Shift not found.")
+        selected_shifts.append(shift)
+
+    user.shift_templates.clear()
+    user.shift_templates.extend(selected_shifts)
+    await user_repository.save(user)
+    return await _get_user_with_shifts(session, user_id)
+
+
 async def list_daily_shift_records(
     session: AsyncSession, department_id: int, year: int, month: int
 ) -> list[DepartmentRosterDay]:
@@ -318,12 +360,14 @@ async def create_employee_shift_assignment(
     session: AsyncSession, payload: EmployeeShiftAssignmentCreateRequest
 ) -> EmployeeShiftAssignment:
     repository = EmployeeShiftAssignmentRepository(session)
-    user = await UserRepository(session).get_by_id(payload.user_id)
+    user_repository = UserRepository(session)
+    user = await user_repository.get_by_id(payload.user_id)
     if user is None:
         raise NotFoundError("User not found.")
     shift = await ShiftTemplateRepository(session).get_by_id(payload.shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
+    _ensure_user_shift_template_allowed(user, payload.shift_id)
     existing = await repository.get_by_user_date(payload.user_id, payload.date)
     if existing is not None:
         raise ConflictError("A shift assignment already exists for the selected employee and date.")
@@ -402,35 +446,28 @@ async def generate_month_employee_shift_assignments(
     payload: EmployeeShiftAssignmentGenerateMonthRequest,
 ) -> EmployeeShiftAssignmentGenerateMonthResponse:
     repository = EmployeeShiftAssignmentRepository(session)
-    department_repository = DepartmentRepository(session)
     user = await UserRepository(session).get_by_id(payload.user_id)
     if user is None:
         raise NotFoundError("User not found.")
-    if user.department_id is None:
-        raise ConflictError("The selected user does not belong to a department.")
-
-    department = await department_repository.get_by_id(user.department_id)
-    if department is None:
-        raise NotFoundError("Department not found.")
-
-    allowed_templates = list(department.shift_templates)
+    allowed_templates = list(user.shift_templates)
     if not allowed_templates:
-        raise ConflictError("The department does not have any allowed shift templates.")
+        raise ConflictError("The selected user does not have allowed shift templates configured.")
 
-    selected_template = None
+    selected_template: ShiftTemplate | None = None
     if payload.shift_id is not None:
         selected_template = next(
             (template for template in allowed_templates if template.id == payload.shift_id),
             None,
         )
         if selected_template is None:
-            raise ConflictError("The selected shift template is not allowed for this department.")
+            raise ConflictError("The selected shift template is not allowed for this user.")
     else:
-        selected_template = allowed_templates[0]
+        selected_template = next(
+            (template for template in allowed_templates if template.is_active),
+            allowed_templates[0],
+        )
 
-    workweek_days = {day.strip() for day in department.default_workweek if day.strip()}
-    if not workweek_days:
-        raise ConflictError("The department does not have a default workweek configured.")
+    workweek_days = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"}
 
     generated_count = 0
     skipped_count = 0
@@ -500,12 +537,16 @@ async def update_employee_shift_assignment(
     schedule = await repository.get_by_id(schedule_id)
     if schedule is None:
         raise NotFoundError("Daily shift schedule not found.")
+    user = await UserRepository(session).get_by_id(schedule.user_id)
+    if user is None:
+        raise NotFoundError("User not found.")
     previous_shift_description = (
         schedule.shift_template.description if schedule.shift_template is not None else "previous shift"
     )
     shift = await ShiftTemplateRepository(session).get_by_id(payload.shift_id)
     if shift is None:
         raise NotFoundError("Shift not found.")
+    _ensure_user_shift_template_allowed(user, payload.shift_id)
     schedule.shift_template_id = payload.shift_id
     schedule = await repository.save(schedule)
     await create_notification_if_possible(

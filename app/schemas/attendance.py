@@ -36,6 +36,17 @@ class DepartmentShiftPolicyRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserShiftPolicyRead(BaseModel):
+    id: UUID
+    first_name: str
+    last_name: str
+    email: str
+    is_active: bool
+    shifts: list["ShiftTemplateRead"] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ShiftTemplateCreateRequest(BaseModel):
     description: str = Field(min_length=1, max_length=255)
     start_time: time
@@ -148,6 +159,10 @@ class DepartmentRosterDayCreateRequest(BaseModel):
 
 class DepartmentScheduleUpdateRequest(BaseModel):
     workweek: list[str] = Field(default_factory=list)
+    shift_ids: list[int] = Field(default_factory=list)
+
+
+class UserShiftPolicyUpdateRequest(BaseModel):
     shift_ids: list[int] = Field(default_factory=list)
 
 

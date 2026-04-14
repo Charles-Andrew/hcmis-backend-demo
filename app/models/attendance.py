@@ -28,6 +28,13 @@ department_shift_templates = Table(
     Column("shift_id", ForeignKey("shifts.id"), primary_key=True),
 )
 
+user_shift_templates = Table(
+    "user_shifts",
+    Base.metadata,
+    Column("user_id", ForeignKey("users.id"), primary_key=True),
+    Column("shift_id", ForeignKey("shifts.id"), primary_key=True),
+)
+
 department_roster_day_assignments = Table(
     "daily_shift_record_schedules",
     Base.metadata,
@@ -56,6 +63,11 @@ class ShiftTemplate(Base):
     departments = relationship(
         "Department",
         secondary=department_shift_templates,
+        back_populates="shift_templates",
+    )
+    users = relationship(
+        "User",
+        secondary=user_shift_templates,
         back_populates="shift_templates",
     )
     employee_shift_assignments = relationship(
@@ -377,4 +389,5 @@ Shift = ShiftTemplate
 DailyShiftSchedule = EmployeeShiftAssignment
 DailyShiftRecord = DepartmentRosterDay
 department_shifts = department_shift_templates
+user_shifts = user_shift_templates
 daily_shift_record_schedules = department_roster_day_assignments

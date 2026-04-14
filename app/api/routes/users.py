@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_staff_user, get_db_session
+from app.core.capabilities import normalize_role
 from app.models.user import User
 from app.schemas.auth import UserPasswordResetResponse
 from app.schemas.user import (
@@ -23,6 +24,22 @@ from app.services.users import (
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def ensure_hr_can_modify_employment_fields(
+    *,
+    current_user: User,
+    fields_set: set[str],
+) -> None:
+    requested_fields = {"employee_type", "employment_status"}
+    if not requested_fields.intersection(fields_set):
+        return
+    if normalize_role(current_user.role) == "HR":
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only HR can modify employee type and employment status.",
+    )
 
 
 @router.get("", response_model=list[UserRead])
@@ -53,6 +70,10 @@ async def post_user(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> User:
+    ensure_hr_can_modify_employment_fields(
+        current_user=current_user,
+        fields_set=payload.model_fields_set,
+    )
     try:
         return await create_user(session, payload)
     except ValueError as exc:
@@ -78,6 +99,10 @@ async def patch_user(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> User:
+    ensure_hr_can_modify_employment_fields(
+        current_user=current_user,
+        fields_set=payload.model_fields_set,
+    )
     return await update_user(session, user_id, payload)
 
 

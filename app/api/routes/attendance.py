@@ -50,6 +50,8 @@ from app.schemas.attendance import (
     BridgeUsersResponse,
     DepartmentShiftPolicyRead,
     DepartmentScheduleUpdateRequest,
+    UserShiftPolicyRead,
+    UserShiftPolicyUpdateRequest,
     DepartmentRosterDayCreateRequest,
     DepartmentRosterDayRead,
     EmployeeShiftAssignmentCreateRequest,
@@ -111,11 +113,13 @@ from app.services.attendance import (
     list_shift_swap_requests,
     list_shift_templates,
     get_department_schedule,
+    get_user_shift_policy,
     respond_to_overtime_request,
     respond_to_shift_swap_request,
     sync_device_attendance,
     update_attendance_record,
     update_department_schedule,
+    update_user_shift_policy,
     update_employee_shift_assignment,
     update_holiday,
     update_shift_template,
@@ -455,6 +459,28 @@ async def read_department_schedule(
     current_user: User = Depends(require_staff_user),
 ) -> Department:
     return await get_department_schedule(session, department_id)
+
+
+@router.patch(
+    "/users/{user_id}/shift-policy",
+    response_model=UserShiftPolicyRead,
+)
+async def patch_user_shift_policy(
+    user_id: UUID,
+    payload: UserShiftPolicyUpdateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> User:
+    return await update_user_shift_policy(session, user_id, payload)
+
+
+@router.get("/users/{user_id}/shift-policy", response_model=UserShiftPolicyRead)
+async def read_user_shift_policy(
+    user_id: UUID,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> User:
+    return await get_user_shift_policy(session, user_id)
 
 
 @router.get("/schedules", response_model=list[EmployeeShiftAssignmentRead], include_in_schema=False)
