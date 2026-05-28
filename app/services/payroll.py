@@ -89,6 +89,8 @@ DEFAULT_DEDUCTION_CONFIG = [
         "data": {"amount": "0"},
     },
 ]
+MONTHLY_TO_DAILY_DIVISOR = Decimal("22")
+SEMI_MONTHLY_DAYS = Decimal("10")
 
 
 def _to_decimal(value: Decimal | int | str | float | None) -> Decimal:
@@ -249,6 +251,11 @@ def _salary_steps(settings: PayrollSetting, base_salary: Decimal) -> list[dict[s
         current = current * step_multiplier
         steps.append({f"STEP {step}": current.quantize(Decimal("0.01"))})
     return steps
+
+
+def _semi_monthly_base_from_monthly(monthly_salary: Decimal) -> Decimal:
+    daily_rate = monthly_salary / MONTHLY_TO_DAILY_DIVISOR
+    return (daily_rate * SEMI_MONTHLY_DAYS).quantize(Decimal("0.01"))
 
 
 async def list_positions(session: AsyncSession, department_id: int | None = None) -> list[Position]:
@@ -597,7 +604,7 @@ async def get_payslip_summary(session: AsyncSession, payslip_id: int) -> dict:
     variable_comp_total = sum((_to_decimal(item.amount) for item in variable_compensations), Decimal("0.00"))
     variable_ded_total = sum((_to_decimal(item.amount) for item in variable_deductions), Decimal("0.00"))
     gross_pay = base_salary + fixed_total + variable_comp_total
-    gross_per_cutoff = gross_pay / Decimal("2")
+    gross_per_cutoff = _semi_monthly_base_from_monthly(base_salary) + variable_comp_total
     mandatory = _compute_deductions(settings, gross_pay)
     mandatory_total = sum(mandatory.values(), Decimal("0.00"))
     effective_date = resolve_mp2_effective_date(payslip.month, payslip.year, payslip.period)

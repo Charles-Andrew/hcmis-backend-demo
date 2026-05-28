@@ -27,6 +27,8 @@ from app.services.payroll import (
 
 
 PH_POLICY_KEY = "PH_STATUTORY"
+MONTHLY_TO_DAILY_DIVISOR = Decimal("22")
+SEMI_MONTHLY_DAYS = Decimal("10")
 
 
 def _to_decimal(value: Decimal | int | str | float | None) -> Decimal:
@@ -45,6 +47,11 @@ def _split_amount_evenly(amount: Decimal) -> tuple[Decimal, Decimal]:
     first_half = _quantize(amount / Decimal("2"))
     second_half = _quantize(amount - first_half)
     return first_half, second_half
+
+
+def _semi_monthly_base_from_monthly(monthly_salary: Decimal) -> Decimal:
+    daily_rate = monthly_salary / MONTHLY_TO_DAILY_DIVISOR
+    return _quantize(daily_rate * SEMI_MONTHLY_DAYS)
 
 
 def _resolve_automatic_deductions(
@@ -335,7 +342,9 @@ async def compute_payslip_summary_v2(
     )
 
     gross_pay = base_salary + fixed_total + variable_comp_total
-    gross_per_cutoff = (gross_pay / Decimal("2")).quantize(Decimal("0.01"))
+    gross_per_cutoff = (_semi_monthly_base_from_monthly(base_salary) + variable_comp_total).quantize(
+        Decimal("0.01")
+    )
     mandatory = await _compute_mandatory_deductions_from_policy(
         session,
         gross_pay,
