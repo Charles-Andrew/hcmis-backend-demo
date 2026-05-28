@@ -12,6 +12,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.department import Department
 from app.models.user import User
 from app.repositories.users import UserRepository
+from app.services.logs import create_app_log
 from app.schemas.auth import (
     AuthChangePasswordRequest,
     AuthLoginRequest,
@@ -98,6 +99,11 @@ async def register(
         is_superuser=False,
     )
     created_user = await repository.create(user)
+    await create_app_log(
+        session,
+        user_id=created_user.id,
+        details="Registered a new account.",
+    )
     return UserRead.model_validate(created_user)
 
 
@@ -149,6 +155,11 @@ async def login(
         request_id,
         str(user.id),
         int((time.perf_counter() - started) * 1000),
+    )
+    await create_app_log(
+        session,
+        user_id=user.id,
+        details="Signed in.",
     )
     return AuthResponse(
         access_token=access_token,

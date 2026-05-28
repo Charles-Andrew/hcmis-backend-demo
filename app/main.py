@@ -8,6 +8,7 @@ from app.api.routes import departments, logs, notifications, profile, special_re
 from app.api.routes import trainings
 from app.core.exceptions import HCMISException
 from app.core.config import settings
+from app.core.audit import write_audit_log
 
 
 @asynccontextmanager
@@ -36,6 +37,13 @@ app.include_router(performance.router)
 app.include_router(chat.router)
 app.include_router(reports.router)
 app.include_router(trainings.router)
+
+
+@app.middleware("http")
+async def audit_mutations_middleware(request, call_next):
+    response = await call_next(request)
+    await write_audit_log(request, response.status_code)
+    return response
 
 
 @app.exception_handler(HCMISException)
