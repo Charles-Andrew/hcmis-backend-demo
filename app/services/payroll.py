@@ -468,25 +468,6 @@ async def _mp2_deduction_for_user(
     return Decimal("0.00")
 
 
-async def _resolve_payslip_deduction_schedule(
-    session: AsyncSession,
-    user_id: UUID,
-    month: int,
-    year: int,
-) -> str:
-    existing_payslips = await PayslipRepository(session).list(
-        user_id=user_id,
-        month=month,
-        year=year,
-    )
-    for existing_payslip in existing_payslips:
-        if existing_payslip.automatic_deduction_schedule:
-            return existing_payslip.automatic_deduction_schedule
-
-    settings = await get_settings(session)
-    return settings.automatic_deduction_schedule
-
-
 async def get_or_create_payslip(
     session: AsyncSession, payload: PayslipCreateRequest
 ) -> Payslip:
@@ -498,6 +479,7 @@ async def get_or_create_payslip(
         payload.user_id, payload.month, payload.year, payload.period
     )
     if payslip is None:
+        settings = await get_settings(session)
         rank, salary = await _current_salary_for_user(
             session,
             user,
@@ -512,15 +494,11 @@ async def get_or_create_payslip(
             period=payload.period,
             rank=rank,
             salary=salary,
-            automatic_deduction_schedule=await _resolve_payslip_deduction_schedule(
-                session,
-                payload.user_id,
-                payload.month,
-                payload.year,
-            ),
+            automatic_deduction_schedule=settings.automatic_deduction_schedule,
         )
         payslip = await repository.create(payslip)
     elif not payslip.released:
+        settings = await get_settings(session)
         rank, salary = await _current_salary_for_user(
             session,
             user,
@@ -530,6 +508,7 @@ async def get_or_create_payslip(
         )
         payslip.rank = rank
         payslip.salary = salary
+        payslip.automatic_deduction_schedule = settings.automatic_deduction_schedule
         payslip = await repository.save(payslip)
     return payslip
 
