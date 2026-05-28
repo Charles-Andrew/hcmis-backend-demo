@@ -8,8 +8,9 @@ REDIS_HOST_PORT ?= 16379
 DATABASE_URL ?= postgresql+asyncpg://hcmis:hcmis@localhost:$(POSTGRES_HOST_PORT)/hcmis
 REDIS_URL ?= redis://localhost:$(REDIS_HOST_PORT)/0
 FASTAPI_APP ?= app/main.py
+FLYCTL ?= flyctl
 
-.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev db-clear seed-initial seed-performance-questionnaires seed-bootstrap-hr seed-payroll-policy reset-and-seed reset-and-bootstrap-prod
+.PHONY: ruff ty check test docker-config up wait-postgres wait-redis migrate dev db-clear seed-initial seed-performance-questionnaires seed-bootstrap-hr seed-payroll-policy reset-and-seed reset-and-bootstrap-prod fly-deploy
 
 ruff:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff check
@@ -59,3 +60,6 @@ seed-performance-questionnaires:
 reset-and-seed: db-clear seed-initial seed-performance-questionnaires
 
 reset-and-bootstrap: db-clear seed-bootstrap-hr seed-payroll-policy seed-performance-questionnaires
+
+fly-deploy:
+	$(FLYCTL) deploy
