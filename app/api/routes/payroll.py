@@ -68,6 +68,7 @@ from app.services.payroll import (
     create_fixed_compensation,
     create_position,
     create_mp2_enrollment,
+    delete_payslip,
     delete_fixed_compensation,
     delete_position,
     get_or_create_payslip,
@@ -426,6 +427,15 @@ async def patch_payslip(
     current_user: User = Depends(require_staff_user),
 ) -> Payslip:
     return await update_payslip(session, payslip_id, payload)
+
+
+@router.delete("/payslips/{payslip_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_payslip(
+    payslip_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_staff_user),
+) -> None:
+    await delete_payslip(session, payslip_id)
 
 
 @router.post("/payslips/{payslip_id}/release-toggle", response_model=PayslipRead)

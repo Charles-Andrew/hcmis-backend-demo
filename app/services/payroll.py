@@ -584,6 +584,16 @@ async def toggle_payslip_release(session: AsyncSession, payslip_id: int) -> Pays
     return payslip
 
 
+async def delete_payslip(session: AsyncSession, payslip_id: int) -> None:
+    repository = PayslipRepository(session)
+    payslip = await repository.get_by_id(payslip_id)
+    if payslip is None:
+        raise NotFoundError("Payslip not found.")
+    if payslip.released:
+        raise ConflictError("Released payslip cannot be deleted.")
+    await repository.delete(payslip)
+
+
 def _get_config_item(settings: PayrollSetting, name: str) -> dict:
     for item in settings.deduction_config:
         if item.get("name") == name:

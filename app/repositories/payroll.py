@@ -22,6 +22,7 @@ from app.models.payroll import (
     PolicyMinimumWageOrder,
     PayrollSetting,
     Payslip,
+    PayslipEvent,
     PayslipVariableCompensation,
     PayslipVariableDeduction,
     ThirteenthMonthAdjustment,
@@ -564,6 +565,9 @@ class PayslipRepository:
         return loaded if loaded is not None else payslip
 
     async def delete(self, payslip: Payslip) -> None:
+        await self.session.execute(
+            delete(PayslipEvent).where(PayslipEvent.payslip_id == payslip.id)
+        )
         await self.session.delete(payslip)
         await self.session.commit()
 
