@@ -424,7 +424,7 @@ async def _current_salary_for_user(
     )
     if assignment is not None:
         position = assignment.position
-        grade = position.salary_grade + max(assignment.rank_level - 1, 0)
+        grade = position.salary_grade
         base_salary = _salary_grade_amount(settings, grade)
         if assignment.step_number is not None:
             for _ in range(assignment.step_number):
@@ -433,28 +433,7 @@ async def _current_salary_for_user(
             _format_rank_display(position.code, assignment.rank_level, assignment.step_number),
             base_salary.quantize(Decimal("0.01")),
         )
-    if not user.rank:
-        return None, None
-    position_code_match = _month_period_pattern().match(user.rank)
-    if position_code_match is None:
-        return user.rank, None
-    position_code = position_code_match.group("position_code")
-    rank = int(position_code_match.group("rank"))
-    if rank < 1 or rank > settings.max_position_rank:
-        return user.rank, None
-    step = position_code_match.group("step")
-    step_number = int(step) if step is not None else None
-    if step_number is not None and (step_number < 1 or step_number > settings.basic_salary_steps):
-        return user.rank, None
-    position = await PositionRepository(session).get_by_code(position_code)
-    if position is None:
-        return user.rank, None
-    grade = position.salary_grade + max(rank - 1, 0)
-    base_salary = _salary_grade_amount(settings, grade)
-    if step_number is not None:
-        for _ in range(step_number):
-            base_salary *= _to_decimal(settings.basic_salary_step_multiplier)
-    return user.rank, base_salary.quantize(Decimal("0.01"))
+    raise ConflictError("No active user position assignment found for the payslip effective date.")
 
 
 async def _mp2_deduction_for_user(
