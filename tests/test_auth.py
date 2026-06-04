@@ -2,7 +2,7 @@ import anyio
 from typing import cast
 from uuid import UUID
 
-from fastapi import Request
+from fastapi import BackgroundTasks, Request
 from pydantic import ValidationError
 from app.api.routes import auth as auth_routes
 from app.core.security import decode_access_token
@@ -36,6 +36,9 @@ class FakeUserRepository:
             return user
         return self.users_by_username.get(normalized)
 
+    async def get_auth_user_by_login_identifier(self, identifier: str):
+        return await self.get_by_login_identifier(identifier)
+
     async def get_by_id(self, user_id: UUID):
         return self.users_by_id.get(user_id)
 
@@ -64,6 +67,7 @@ async def _login(payload: dict[str, str]) -> AuthResponse:
 
     return await auth_routes.login(
         Request({"type": "http", "headers": []}, receive),
+        BackgroundTasks(),
         AuthLoginRequest(**payload),
         session=cast(AsyncSession, object()),
     )

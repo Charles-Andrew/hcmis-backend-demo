@@ -71,6 +71,24 @@ class UserRepository:
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_auth_user_by_login_identifier(self, identifier: str) -> User | None:
+        normalized_identifier = identifier.strip().lower()
+        statement = (
+            select(User)
+            .options(
+                selectinload(User.department),
+                selectinload(User.position),
+            )
+            .where(
+                or_(
+                    User.email == normalized_identifier,
+                    User.username == normalized_identifier,
+                )
+            )
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def get_by_employee_number(self, employee_number: str) -> User | None:
         statement = (
             select(User)

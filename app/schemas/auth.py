@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_serializer, model_validator
 
 from app.schemas.user import UserWithCapabilitiesRead
 
@@ -35,10 +35,16 @@ class AuthLoginRequest(BaseModel):
         return self
 
 
+class AuthLoginUserRead(UserWithCapabilitiesRead):
+    @field_serializer("profile_picture_url")
+    def serialize_profile_picture_url(self, value: str | None) -> str | None:
+        return value
+
+
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    user: UserWithCapabilitiesRead
+    user: AuthLoginUserRead
 
 
 class AuthChangePasswordRequest(BaseModel):

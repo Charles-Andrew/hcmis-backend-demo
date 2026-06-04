@@ -2,13 +2,14 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session
 from app.core.capabilities import resolve_user_capabilities
 from app.core.security import create_access_token, hash_password, verify_password
+from app.db.session import async_session_maker
 from app.models.department import Department
 from app.models.user import User
 from app.repositories.users import UserRepository
@@ -16,6 +17,7 @@ from app.services.logs import create_app_log
 from app.schemas.auth import (
     AuthChangePasswordRequest,
     AuthLoginRequest,
+    AuthLoginUserRead,
     AuthRegisterRequest,
     AuthResponse,
 )
@@ -23,6 +25,15 @@ from app.schemas.user import UserRead, UserWithCapabilitiesRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
+
+
+async def create_sign_in_app_log(user_id) -> None:
+    async with async_session_maker() as session:
+        await create_app_log(
+            session,
+            user_id=user_id,
+            details="Signed in.",
+        )
 
 
 def _normalize_username(value: str | None) -> str | None:
@@ -110,6 +121,7 @@ async def register(
 @router.post("/login", response_model=AuthResponse)
 async def login(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: AuthLoginRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> AuthResponse:
@@ -119,11 +131,17 @@ async def login(
 
     repository = UserRepository(session)
     identifier = (payload.identifier or (str(payload.email) if payload.email else "")).strip()
-    user = await repository.get_by_login_identifier(identifier)
-    if user is None or not verify_password(payload.password, user.password_hash):
+    user = await repository.get_auth_user_by_login_identifier(identifier)
+    after_lookup = time.perf_counter()
+
+    password_valid = user is not None and verify_password(payload.password, user.password_hash)
+    after_verify = time.perf_counter()
+    if user is None or not password_valid:
         logger.warning(
-            "auth_login_invalid_credentials request_id=%s duration_ms=%d",
+            "auth_login_invalid_credentials request_id=%s lookup_ms=%d verify_ms=%d duration_ms=%d",
             request_id,
+            int((after_lookup - started) * 1000),
+            int((after_verify - after_lookup) * 1000),
             int((time.perf_counter() - started) * 1000),
         )
         raise HTTPException(
@@ -147,20 +165,20 @@ async def login(
         )
 
     access_token = create_access_token(subject=str(user.id))
-    validated_user = UserWithCapabilitiesRead.model_validate(user).model_copy(
+    validated_user = AuthLoginUserRead.model_validate(user).model_copy(
         update={"capabilities": resolve_user_capabilities(user)}
     )
+    after_response_build = time.perf_counter()
     logger.info(
-        "auth_login_success request_id=%s user_id=%s duration_ms=%d",
+        "auth_login_success request_id=%s user_id=%s lookup_ms=%d verify_ms=%d response_ms=%d duration_ms=%d",
         request_id,
         str(user.id),
+        int((after_lookup - started) * 1000),
+        int((after_verify - after_lookup) * 1000),
+        int((after_response_build - after_verify) * 1000),
         int((time.perf_counter() - started) * 1000),
     )
-    await create_app_log(
-        session,
-        user_id=user.id,
-        details="Signed in.",
-    )
+    background_tasks.add_task(create_sign_in_app_log, user.id)
     return AuthResponse(
         access_token=access_token,
         token_type="bearer",
