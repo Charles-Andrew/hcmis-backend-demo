@@ -628,6 +628,15 @@ async def _summary(user_id: UUID, year: int, month: int) -> AttendanceSummaryRea
     )
 
 
+async def _list_attendance_records(user_id: UUID, year: int, month: int) -> list[AttendanceRecord]:
+    return await attendance_service.list_attendance_records(
+        session=cast(AsyncSession, object()),
+        user_id=user_id,
+        year=year,
+        month=month,
+    )
+
+
 async def _create_employee_shift_assignment(date_value: date, user_id: UUID, shift_id: int):
     return await attendance_service.create_employee_shift_assignment(
         session=cast(AsyncSession, object()),
@@ -1634,3 +1643,70 @@ def test_attendance_summary_groups_days(monkeypatch):
     assert response.days[23].overtime_approved is True
     assert response.days[23].approved_leave is not None
     assert response.days[23].approved_leave.leave_type == "PA"
+
+
+def test_attendance_summary_uses_manila_day_grouping(monkeypatch):
+    department = _make_department(1)
+    user = _make_user(UUID(int=1), department=department)
+    record = AttendanceRecord(
+        id=1,
+        user_id=user.id,
+        device_user_id=77,
+        timestamp=datetime(2026, 3, 23, 16, 30, tzinfo=UTC),
+        punch="IN",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    FakeUserRepository.users = {user.id: user}
+    FakeAttendanceRecordRepository.records = {record.id: record}
+
+    monkeypatch.setattr(attendance_service, "UserRepository", FakeUserRepository)
+    monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
+    monkeypatch.setattr(
+        attendance_service,
+        "EmployeeShiftAssignmentRepository",
+        FakeEmployeeShiftAssignmentRepository,
+    )
+    monkeypatch.setattr(attendance_service, "HolidayRepository", FakeHolidayRepository)
+    monkeypatch.setattr(attendance_service, "LeaveRequestRepository", FakeLeaveRequestRepository)
+    monkeypatch.setattr(attendance_service, "OvertimeRepository", FakeOvertimeRepository)
+
+    response = anyio.run(_summary, user.id, 2026, 3)
+
+    assert response.days[23].attendance_records[0].id == 1
+    assert response.days[22].attendance_records == []
+
+
+def test_list_attendance_records_uses_manila_month_bounds(monkeypatch):
+    user = _make_user(UUID(int=1))
+    included = AttendanceRecord(
+        id=1,
+        user_id=user.id,
+        device_user_id=77,
+        timestamp=datetime(2026, 3, 31, 16, 30, tzinfo=UTC),
+        punch="IN",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    excluded = AttendanceRecord(
+        id=2,
+        user_id=user.id,
+        device_user_id=77,
+        timestamp=datetime(2026, 4, 30, 16, 30, tzinfo=UTC),
+        punch="OUT",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+
+    FakeUserRepository.users = {user.id: user}
+    FakeAttendanceRecordRepository.records = {
+        included.id: included,
+        excluded.id: excluded,
+    }
+
+    monkeypatch.setattr(attendance_service, "AttendanceRecordRepository", FakeAttendanceRecordRepository)
+
+    records = anyio.run(_list_attendance_records, user.id, 2026, 4)
+
+    assert [record.id for record in records] == [1]

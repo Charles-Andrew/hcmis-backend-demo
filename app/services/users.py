@@ -26,7 +26,7 @@ from app.services.profile_photo_storage import (
     delete_profile_photo_by_url,
     save_profile_photo,
 )
-from app.core.time import utc_now
+from app.core.time import local_today
 
 
 EMPLOYMENT_MOVEMENT_FIELDS = {
@@ -73,7 +73,7 @@ def _default_assignment_effective_from(
         return assignment_effective_from
     if date_of_hiring is not None:
         return date_of_hiring
-    return utc_now().date()
+    return local_today()
 
 
 async def _validate_position_assignment(

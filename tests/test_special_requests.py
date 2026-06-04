@@ -117,7 +117,7 @@ def test_approve_certificate_request_adds_attendance_record(monkeypatch):
     assert getattr(attendance_record, "user_id") == request.user_id
     assert getattr(attendance_record, "punch") == "OUT"
     assert getattr(attendance_record, "timestamp") == datetime(
-        2026, 4, 10, 8, 45, tzinfo=UTC
+        2026, 4, 10, 0, 45, tzinfo=UTC
     )
 
 

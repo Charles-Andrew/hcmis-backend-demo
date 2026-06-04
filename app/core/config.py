@@ -35,6 +35,10 @@ class Settings(BaseSettings):
         default="development",
         validation_alias="ENVIRONMENT",
     )
+    app_timezone: str = Field(
+        default="Asia/Manila",
+        validation_alias="APP_TIMEZONE",
+    )
     shared_resources_max_file_size_mb: int = Field(
         default=50,
         validation_alias="SHARED_RESOURCES_MAX_FILE_SIZE_MB",

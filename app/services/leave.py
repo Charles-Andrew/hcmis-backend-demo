@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.capabilities import is_staff_user
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
-from app.core.time import utc_now
+from app.core.time import local_today, utc_now
 from app.models.leave import (
     LeaveCredit,
     LeaveRequest,
@@ -586,7 +586,7 @@ async def list_leave_credits(
         users = [user for user in users if user.id == user_id]
 
     snapshots: list[LeaveCreditSnapshot] = []
-    as_of = utc_now().date()
+    as_of = local_today()
     for user in users:
         cycle_start = _credit_cycle_start(user, as_of)
         used_credits = (
@@ -623,7 +623,8 @@ async def get_my_leave_credit(
         raise NotFoundError("User not found.")
 
     leave_type_policy = await _resolve_leave_type_policy(session, leave_type)
-    cycle_start = _credit_cycle_start(user, utc_now().date())
+    as_of = local_today()
+    cycle_start = _credit_cycle_start(user, as_of)
     used_credits_by_user_id = (
         await LeaveRequestRepository(session).count_approved_by_user_ids_for_leave_type(
             [user.id],
@@ -633,7 +634,7 @@ async def get_my_leave_credit(
         )
     )
     used_credits = used_credits_by_user_id.get(user.id, 0)
-    credits = round(_calculate_total_credits(user, leave_type_policy, utc_now().date()), 2)
+    credits = round(_calculate_total_credits(user, leave_type_policy, as_of), 2)
     remaining_credits = round(max(credits - used_credits, 0), 2)
 
     return {

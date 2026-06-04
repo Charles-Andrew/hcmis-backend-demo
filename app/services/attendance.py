@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.capabilities import is_staff_user
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError, PermissionDeniedError
-from app.core.time import utc_now
+from app.core.time import ensure_utc, month_bounds_utc, to_local, utc_now
 from app.models.attendance import (
     AttendanceRecord,
     DepartmentRosterDay,
@@ -88,9 +88,7 @@ def _month_window(year: int, month: int) -> tuple[date, date]:
 
 
 def _ensure_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
+    return ensure_utc(value)
 
 
 def _validate_holiday_date(day: int, month: int, year: int | None) -> None:
@@ -564,9 +562,7 @@ async def update_employee_shift_assignment(
 async def list_attendance_records(
     session: AsyncSession, user_id: UUID, year: int, month: int
 ) -> list[AttendanceRecord]:
-    start, end = _month_window(year, month)
-    start_dt = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
-    end_dt = datetime.combine(end, datetime.max.time(), tzinfo=UTC)
+    start_dt, end_dt = month_bounds_utc(year, month)
     return await AttendanceRecordRepository(session).list_for_user_range(
         user_id, start_dt, end_dt
     )
@@ -1094,10 +1090,11 @@ async def get_attendance_summary(
 
     start, end = _month_window(year, month)
     total_days = (end - start).days + 1
+    start_dt, end_dt = month_bounds_utc(year, month)
     attendance_records = await AttendanceRecordRepository(session).list_for_user_range(
         user_id,
-        datetime.combine(start, datetime.min.time(), tzinfo=UTC),
-        datetime.combine(end, datetime.max.time(), tzinfo=UTC),
+        start_dt,
+        end_dt,
     )
     assignments = await EmployeeShiftAssignmentRepository(session).list_for_user_month(
         user_id, year, month
@@ -1113,7 +1110,7 @@ async def get_attendance_summary(
 
     records_by_day: dict[int, list[AttendanceRecord]] = {}
     for record in attendance_records:
-        records_by_day.setdefault(record.timestamp.astimezone().day, []).append(record)
+        records_by_day.setdefault(to_local(record.timestamp).day, []).append(record)
 
     assignments_by_day: dict[int, EmployeeShiftAssignment] = {}
     for assignment in assignments:

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import time as time_utils
 from app.core.time import utc_now
 from app.models.attendance import OvertimeRequest
 from app.models.department import Department
@@ -484,11 +485,7 @@ def test_incremental_leave_credit_accrues_on_monthly_anniversary(monkeypatch):
     employee = FakeUserRepository.users[UUID(int=1)]
     employee.date_of_hiring = date(2026, 4, 15)
 
-    monkeypatch.setattr(
-        leave_service,
-        "utc_now",
-        lambda: datetime(2026, 5, 14, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(time_utils, "utc_now", lambda: datetime(2026, 5, 14, tzinfo=timezone.utc))
     before_anniversary = anyio.run(
         leave_service.get_my_leave_credit,
         cast(AsyncSession, object()),
@@ -498,11 +495,7 @@ def test_incremental_leave_credit_accrues_on_monthly_anniversary(monkeypatch):
     assert before_anniversary["credits"] == 0.0
     assert before_anniversary["remaining_credits"] == 0.0
 
-    monkeypatch.setattr(
-        leave_service,
-        "utc_now",
-        lambda: datetime(2026, 5, 15, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(time_utils, "utc_now", lambda: datetime(2026, 5, 15, tzinfo=timezone.utc))
     on_anniversary = anyio.run(
         leave_service.get_my_leave_credit,
         cast(AsyncSession, object()),
@@ -513,6 +506,30 @@ def test_incremental_leave_credit_accrues_on_monthly_anniversary(monkeypatch):
     assert on_anniversary["remaining_credits"] == 1.25
 
 
+def test_leave_credit_uses_manila_business_date(monkeypatch):
+    _reset_fakes()
+    _seed_users()
+    _patch_dependencies(monkeypatch)
+
+    employee = FakeUserRepository.users[UUID(int=1)]
+    employee.date_of_hiring = date(2026, 4, 15)
+
+    monkeypatch.setattr(
+        time_utils,
+        "utc_now",
+        lambda: datetime(2026, 5, 14, 18, 0, tzinfo=timezone.utc),
+    )
+    credit = anyio.run(
+        leave_service.get_my_leave_credit,
+        cast(AsyncSession, object()),
+        employee.id,
+        "PA",
+    )
+
+    assert credit["credits"] == 1.25
+    assert credit["remaining_credits"] == 1.25
+
+
 def test_leave_credits_expire_on_annual_anniversary(monkeypatch):
     _reset_fakes()
     _seed_users()
@@ -521,11 +538,7 @@ def test_leave_credits_expire_on_annual_anniversary(monkeypatch):
     employee = FakeUserRepository.users[UUID(int=1)]
     employee.date_of_hiring = date(2025, 4, 15)
 
-    monkeypatch.setattr(
-        leave_service,
-        "utc_now",
-        lambda: datetime(2026, 4, 14, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(time_utils, "utc_now", lambda: datetime(2026, 4, 14, tzinfo=timezone.utc))
     leave_request = anyio.run(
         _create_leave,
         {"leave_date": date(2026, 4, 14), "leave_type": "PA", "info": "Pre-expiry leave"},
@@ -538,11 +551,7 @@ def test_leave_credits_expire_on_annual_anniversary(monkeypatch):
         "PAID",
     )
 
-    monkeypatch.setattr(
-        leave_service,
-        "utc_now",
-        lambda: datetime(2026, 4, 15, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(time_utils, "utc_now", lambda: datetime(2026, 4, 15, tzinfo=timezone.utc))
     credit_after_anniversary = anyio.run(
         leave_service.get_my_leave_credit,
         cast(AsyncSession, object()),
@@ -562,11 +571,7 @@ def test_no_hire_date_forces_zero_credits(monkeypatch):
     employee = FakeUserRepository.users[UUID(int=1)]
     employee.date_of_hiring = None
 
-    monkeypatch.setattr(
-        leave_service,
-        "utc_now",
-        lambda: datetime(2026, 9, 1, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(time_utils, "utc_now", lambda: datetime(2026, 9, 1, tzinfo=timezone.utc))
     incremental_credit = anyio.run(
         leave_service.get_my_leave_credit,
         cast(AsyncSession, object()),

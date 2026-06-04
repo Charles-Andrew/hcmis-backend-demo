@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.core.time import utc_now
+from app.core.time import local_today, utc_now
 from app.models.payroll import (
     FixedCompensation,
     Mp2Enrollment,
@@ -146,7 +146,7 @@ def resolve_mp2_effective_date(
     period: str | None,
 ) -> date:
     if month is None or year is None:
-        return utc_now().date()
+        return local_today()
     if period == "1ST":
         return date(year, month, 15)
     return date(year, month, monthrange(year, month)[1])

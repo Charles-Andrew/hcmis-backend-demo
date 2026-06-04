@@ -1,10 +1,11 @@
 from uuid import UUID
 
-from datetime import UTC, date, datetime, time
+from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import day_bounds_utc
 from app.models.app_log import AppLog
 
 
@@ -16,11 +17,10 @@ class AppLogRepository:
         self,
         selected_date: date | None,
         user_id: UUID | None,
-    ):
+        ):
         statement = select(AppLog)
         if selected_date is not None:
-            start = datetime.combine(selected_date, time.min, tzinfo=UTC)
-            end = datetime.combine(selected_date, time.max, tzinfo=UTC)
+            start, end = day_bounds_utc(selected_date)
             statement = statement.where(
                 AppLog.created_at >= start,
                 AppLog.created_at <= end,

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db_session, require_staff_user
-from app.core.time import utc_now
+from app.core.time import local_today
 from app.models.payroll import (
     FixedCompensation,
     Mp2Enrollment,
@@ -279,7 +279,7 @@ async def post_end_mp2_enrollment(
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_staff_user),
 ) -> Mp2Enrollment:
-    return await end_mp2_enrollment(session, enrollment_id, utc_now().date())
+    return await end_mp2_enrollment(session, enrollment_id, local_today())
 
 
 @router.get("/positions", response_model=list[PositionRead])

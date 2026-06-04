@@ -17,7 +17,11 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column("trainings", sa.Column("training_date", sa.Date(), nullable=True))
-    op.execute("UPDATE trainings SET training_date = (created_at AT TIME ZONE 'UTC')::date WHERE training_date IS NULL")
+    op.execute(
+        "UPDATE trainings "
+        "SET training_date = ((created_at AT TIME ZONE 'Asia/Manila'))::date "
+        "WHERE training_date IS NULL"
+    )
     op.alter_column("trainings", "training_date", nullable=False)
     op.create_index(op.f("ix_trainings_training_date"), "trainings", ["training_date"], unique=False)
 

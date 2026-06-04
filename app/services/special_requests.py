@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
-from app.core.time import utc_now
+from app.core.time import combine_local, utc_now
 from app.models.attendance import AttendanceRecord, OvertimeRequest
 from app.models.leave import LeaveRequestStatus
 from app.models.special_requests import (
@@ -39,7 +39,7 @@ def _display_user_name(user: User) -> str:
 
 
 def _certificate_attendance_timestamp(request: CertificateAttendanceRequest) -> datetime:
-    return datetime.combine(request.date, request.time, tzinfo=UTC)
+    return combine_local(request.date, request.time).astimezone(UTC)
 
 
 async def _notify_user(
