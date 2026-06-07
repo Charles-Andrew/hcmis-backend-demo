@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import hash_password
 import app.db.base  # noqa: F401
 from app.db.session import async_session_maker
 from app.models.department import Department
 from app.models.user import User
 
-TEST_PASSWORD = "TestPass123!"
-TEST_PASSWORD_HASH = "$2b$12$62qbDiRGw728LAwqxkyV/OrD/01Ohsswli8KhNwsQOCD8QBBQAn4."
+TEST_PASSWORD = "ndkc123"
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class SeedAccount:
 
 SEED_ACCOUNTS: tuple[SeedAccount, ...] = (
     SeedAccount(
-        email="admin@example.com",
+        email="admin@ndkc.edu.ph",
         first_name="Test",
         last_name="Admin",
         employee_number="ADM-001",
@@ -39,7 +39,7 @@ SEED_ACCOUNTS: tuple[SeedAccount, ...] = (
         is_superuser=True,
     ),
     SeedAccount(
-        email="hr@example.com",
+        email="hr@ndkc.edu.ph",
         first_name="Test",
         last_name="HR",
         employee_number="HR-001",
@@ -48,7 +48,7 @@ SEED_ACCOUNTS: tuple[SeedAccount, ...] = (
         department_code="HR",
     ),
     SeedAccount(
-        email="employee@example.com",
+        email="employee@ndkc.edu.ph",
         first_name="Test",
         last_name="Employee",
         employee_number="EMP-001",
@@ -81,7 +81,7 @@ async def upsert_user(
         select(User).where(User.email == account.email.lower())
     )
     user = result.scalar_one_or_none()
-    password_hash = TEST_PASSWORD_HASH
+    password_hash = hash_password(TEST_PASSWORD)
 
     if user is None:
         user = User(
