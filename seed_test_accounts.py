@@ -7,12 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db.base  # noqa: F401
+from app.core.security import hash_password
 from app.db.session import async_session_maker
 from app.models.department import Department
 from app.models.user import User
 
-TEST_PASSWORD = "TestPass123!"
-TEST_PASSWORD_HASH = "$2b$12$62qbDiRGw728LAwqxkyV/OrD/01Ohsswli8KhNwsQOCD8QBBQAn4."
+TEST_PASSWORD = "qweasz123"
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ async def upsert_user(
         select(User).where(User.email == account.email.lower())
     )
     user = result.scalar_one_or_none()
-    password_hash = TEST_PASSWORD_HASH
+    password_hash = hash_password(TEST_PASSWORD)
 
     if user is None:
         user = User(
