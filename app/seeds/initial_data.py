@@ -21,7 +21,7 @@ from app.models.leave import (
 from app.models.performance import Announcement, SharedResource
 from app.models.user import User
 
-TEST_PASSWORD = "ndkc123"
+TEST_PASSWORD = "qweasz123"
 
 
 @dataclass(frozen=True)

@@ -8,11 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 import app.db.base  # noqa: F401
+from app.core.security import hash_password
 from app.db.session import async_session_maker
 from app.models.department import Department
 from app.models.user import User
 
-TEST_PASSWORD = "ndkc123"
+TEST_PASSWORD = "qweasz123"
 
 
 @dataclass(frozen=True)
